@@ -9,11 +9,20 @@
             "email": "info@example.invalid"
         }
     ],
+    "autoload": {
+        "psr-4": {
+            "Avpvh\\FindAndView\\": "src/php/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Avpvh\\FindAndView\\Tests\\": "tests/"
+        }
+    },
     "config": {
         "allow-plugins": {
             "dealerdirect/phpcodesniffer-composer-installer": true
         },
-        "classmap-authoritative": true,
         "platform": {
             "php": "8.2"
         }
