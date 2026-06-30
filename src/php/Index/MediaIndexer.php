@@ -42,8 +42,12 @@ final class MediaIndexer {
 	/**
 	 * Build an IndexItem for a scanned document page.
 	 *
+	 * page_label must match the txt/png filename stem produced by scan_pipeline.py (e.g. "page_01" or
+	 * "page_001" — padding depends on total page count, so pass it from the actual filename).
+	 *
 	 * @param array{
 	 *   collection: string,
+	 *   page_label: string,
 	 *   page_number: int,
 	 *   text: string,
 	 *   file: StorageFile,
@@ -54,7 +58,7 @@ final class MediaIndexer {
 	public function from_scan( array $data ): IndexItem {
 		$file      = $data['file'];
 		$page      = $data['page_number'];
-		$label     = sprintf( 'page_%02d', $page );
+		$label     = $data['page_label'];
 		$id        = $data['collection'] . '__' . $label;
 		return new IndexItem(
 			id:          $id,
