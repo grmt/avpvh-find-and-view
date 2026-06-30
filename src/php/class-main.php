@@ -2,8 +2,11 @@
 
 namespace Avpvh\FindAndView;
 
+use Avpvh\FindAndView\Admin\SettingsPage;
+use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Observer\PostObserver;
 use Avpvh\FindAndView\Queue\SyncQueue;
+use Avpvh\FindAndView\Shortcode\FindAndViewShortcode;
 
 final class Main {
 	public static function init( string $plugin_file ): void {
@@ -13,11 +16,13 @@ final class Main {
 	public static function boot(): void {
 		SyncQueue::register_handlers();
 
-		$settings   = get_option( 'fav_settings', [] );
-		$post_types = $settings['post_types'] ?? [ 'post', 'page' ];
+		$s          = Settings::get();
+		$post_types = $s['post_types'];
 
 		( new PostObserver( $post_types ) )->register();
+		( new FindAndViewShortcode() )->register();
+		( new SettingsPage() )->register();
 
-		// TODO: register shortcode, admin UI, CLI commands
+		IndexCommand::register();
 	}
 }

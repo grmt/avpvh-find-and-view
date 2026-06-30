@@ -18,6 +18,10 @@ final class MeilisearchClient {
 		$this->client->index( $index )->deleteDocuments( $ids );
 	}
 
+	public function delete_all( string $index ): void {
+		$this->client->index( $index )->deleteAllDocuments();
+	}
+
 	public function ensure_settings( string $index, array $settings ): void {
 		$this->client->index( $index )->updateSettings( $settings );
 	}

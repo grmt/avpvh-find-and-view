@@ -12,6 +12,7 @@ final class IndexItem {
 		public readonly string       $text,        // OCR, EXIF description, post content
 		public readonly string       $collection,  // album, productie, post_type label
 		public readonly string       $url,         // permalink for WP content, empty for media
+		public readonly string       $thumb_url,   // thumbnail URL (resolved at index time)
 		public readonly ?StorageFile $file,        // null for WP content
 		public readonly array        $tags,
 		public readonly ?string      $date,
@@ -26,6 +27,7 @@ final class IndexItem {
 			'text'        => $this->text,
 			'collection'  => $this->collection,
 			'url'         => $this->url ?: null,
+			'thumb_url'   => $this->thumb_url ?: null,
 			'locations'   => $this->file?->to_array() ?? [],
 			'tags'        => $this->tags,
 			'date'        => $this->date,
