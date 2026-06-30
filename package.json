@@ -1,0 +1,55 @@
+{
+  "name": "avpvh-find-and-view",
+  "version": "0.1.0",
+  "description": "Find and view photos, archaeological finds, and scanned documents stored in Google Drive",
+  "license": "MIT",
+  "author": "grmt",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/grmt/avpvh-find-and-view.git"
+  },
+  "type": "module",
+  "scripts": {
+    "clean": "rimraf --glob dist/*",
+    "prebuild": "npm run clean",
+    "build:gulp": "gulp --gulpfile config/gulpfile.js --cwd . --color build",
+    "build:js:search": "vite build --config config/vite/search.config.ts",
+    "build:js": "run-p -c --aggregate-output build:js:*",
+    "build": "run-p -c --aggregate-output build:*",
+    "lint:css": "stylelint --config config/stylelint.config.js --color 'src/**/*.css'",
+    "lint:ts:eslint": "eslint --color 'src/**/*.ts' 'config/**/*.{js,ts}'",
+    "lint:ts:typecheck": "tsc --noEmit",
+    "lint:ts": "run-p -c --aggregate-output lint:ts:*",
+    "lint": "run-p -c --aggregate-output lint:*",
+    "test": "run-p -c --aggregate-output test:*"
+  },
+  "dependencies": {
+    "@meilisearch/instant-meilisearch": "^0.19",
+    "instantsearch.js": "^4",
+    "photoswipe": "^5.4.4"
+  },
+  "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.7.1",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@wordpress/browserslist-config": "^6.22.0",
+    "eslint": "^9.0.0",
+    "eslint-import-resolver-typescript": "^3.10.1",
+    "eslint-plugin-compat": "^6.0.2",
+    "eslint-plugin-prefer-arrow-functions": "^3.4.2",
+    "eslint-plugin-prettier": "^5.4.0",
+    "eslint-plugin-simple-import-sort": "^13.0.0",
+    "gulp": "^5.0.0",
+    "gulp-shell": "^0.8.0",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.5.3",
+    "rimraf": "^6.0.1",
+    "stylelint": "^16.19.1",
+    "stylelint-config-standard": "^38.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.0.0"
+  },
+  "browserslist": [
+    "extends @wordpress/browserslist-config"
+  ]
+}

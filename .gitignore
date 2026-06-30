@@ -1,0 +1,8 @@
+node_modules/
+vendor/
+dist/vendor/
+dist/*.js
+dist/*.css
+dist/class-*.php
+*.log
+.DS_Store
