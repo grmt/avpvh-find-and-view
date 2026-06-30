@@ -1,17 +1,23 @@
-<?php
-/**
- * Plugin entry point.
- *
- * @package avpvh-find-and-view
- */
-
-declare( strict_types = 1 );
+<?php declare( strict_types = 1 );
 
 namespace Avpvh\FindAndView;
 
-final class Main {
+use Avpvh\FindAndView\Observer\PostObserver;
+use Avpvh\FindAndView\Queue\SyncQueue;
 
+final class Main {
 	public static function init( string $plugin_file ): void {
-		// TODO: register shortcodes, hooks, settings
+		add_action( 'init', [ self::class, 'boot' ] );
+	}
+
+	public static function boot(): void {
+		SyncQueue::register_handlers();
+
+		$settings   = get_option( 'fav_settings', [] );
+		$post_types = $settings['post_types'] ?? [ 'post', 'page' ];
+
+		( new PostObserver( $post_types ) )->register();
+
+		// TODO: register shortcode, admin UI, CLI commands
 	}
 }
