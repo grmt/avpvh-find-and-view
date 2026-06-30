@@ -3,6 +3,7 @@ import instantsearch from 'instantsearch.js';
 import { searchBox, hits, pagination, configure, index } from 'instantsearch.js/es/widgets';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { Lightbox, type LightboxItem } from './lightbox';
+import { BrowseMode } from './browse';
 import type { FavConfig, MeiliHit } from './types';
 
 function parseContains(q: string): string {
@@ -106,6 +107,37 @@ function initInstance(cfg: FavConfig): void {
 
   search.addWidgets(widgets);
   search.start();
+
+  // Browse mode — activated when search box is empty
+  let browse: BrowseMode | null = null;
+  if (cfg.browseMode && cfg.showMedia) {
+    const browseContainer = root.querySelector<HTMLElement>('.fav-browse')!;
+    const breadcrumbEl    = root.querySelector<HTMLElement>('.fav-breadcrumb')!;
+    const browseGrid      = root.querySelector<HTMLElement>('.fav-browse-grid')!;
+    const resultsEl       = root.querySelector<HTMLElement>('.fav-results')!;
+
+    browse = new BrowseMode(cfg, lb, browseContainer, breadcrumbEl, browseGrid);
+
+    const syncBrowse = (query: string): void => {
+      if (query.trim()) {
+        browse!.hide();
+        resultsEl.style.display = '';
+      } else {
+        resultsEl.style.display = 'none';
+        void browse!.enter(browse!.current() ?? undefined);
+      }
+    };
+
+    // Attach once the searchbox widget has rendered
+    search.on('render', () => {
+      const input = root.querySelector<HTMLInputElement>('.ais-SearchBox-input');
+      if (!input || input.dataset['browseAttached']) return;
+      input.dataset['browseAttached'] = '1';
+      input.addEventListener('input', () => syncBrowse(input.value));
+      // Initial state
+      syncBrowse(input.value);
+    });
+  }
 
   // Section collapse
   root.querySelectorAll<HTMLElement>('.fav-section-header').forEach(hdr => {

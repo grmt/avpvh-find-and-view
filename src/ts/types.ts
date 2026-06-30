@@ -23,6 +23,7 @@ export interface FavConfig {
   snippetLen: number;
   showMedia: boolean;
   showContent: boolean;
+  browseMode: boolean;
   placeholder: string;
 }
 

@@ -22,6 +22,7 @@ final class FindAndViewShortcode {
 			'snippet_len'  => 30,
 			'show_media'   => 'true',
 			'show_content' => 'true',
+			'browse_mode'  => 'true',
 		], $atts );
 
 		if ( empty( $s['meili_url'] ) || empty( $s['meili_key'] ) ) {
@@ -31,6 +32,7 @@ final class FindAndViewShortcode {
 		$uid          = 'fav-' . ( ++self::$instance_count );
 		$show_media   = $atts['show_media']   === 'true';
 		$show_content = $atts['show_content'] === 'true';
+		$browse_mode  = $atts['browse_mode']  === 'true';
 
 		self::$instances[] = [
 			'uid'          => $uid,
@@ -42,6 +44,7 @@ final class FindAndViewShortcode {
 			'snippetLen'   => (int) $atts['snippet_len'],
 			'showMedia'    => $show_media,
 			'showContent'  => $show_content,
+			'browseMode'   => $browse_mode,
 			'placeholder'  => $atts['placeholder'],
 		];
 
@@ -86,6 +89,13 @@ final class FindAndViewShortcode {
 						</label>
 					</div>
 				</div>
+
+				<?php if ( $browse_mode && $show_media ): ?>
+				<div class="fav-browse">
+					<nav class="fav-breadcrumb" aria-label="<?php esc_attr_e( 'Navigatie', 'avpvh-find-and-view' ); ?>"></nav>
+					<div class="fav-browse-grid"></div>
+				</div>
+				<?php endif; ?>
 
 				<div class="fav-results">
 					<?php if ( $show_media ): ?>
