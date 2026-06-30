@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-require_once __DIR__ . '/dist/vendor/autoload.php';
-require_once __DIR__ . '/dist/class-main.php';
+require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/src/php/class-main.php';
 
 Main::init( __FILE__ );
