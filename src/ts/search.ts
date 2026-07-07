@@ -43,7 +43,7 @@ function hitToHtml(hit: MeiliHit, withLink: boolean): string {
     : (hit.title || hit.collection || hit.id);
 
   if (hit.thumb_url && !withLink) {
-    return `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}">
+    return `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}" data-collection="${hit.collection}">
       <img src="${hit.thumb_url}" alt="" loading="lazy"></a>
       <div class="fav-body"><h3>${title}</h3><p>${snip}</p></div>`;
   }
@@ -54,26 +54,39 @@ function hitToHtml(hit: MeiliHit, withLink: boolean): string {
     <h3><a href="${hit.url}">${title}</a></h3><p>${snip}</p></div>`;
 }
 
+interface PgNode { url: string; title: string; children: Record<string, PgNode> }
+
 function initInstance(cfg: FavConfig): void {
   const root = document.getElementById(cfg.uid);
   if (!root) return;
 
   let substringMode = false;
   let collectionFilter: string | null = null;
+  let pageFilter: string | null = null;
+  let pageTreeData: Record<string, PgNode> | null = null;
+  let pageBrowsePath: string[] = [];
+  let activePageUrls: Set<string> | null = null;
 
   const { searchClient: baseClient } = instantMeiliSearch(cfg.meiliUrl, cfg.meiliKey, {
     placeholderSearch: false,
   });
 
+  const emptyResults = (reqs: Parameters<typeof baseClient.search>[0]) =>
+    Promise.resolve({ results: reqs.map(() => ({ hits: [], nbHits: 0, page: 0, nbPages: 0, hitsPerPage: cfg.perPage, processingTimeMS: 0, exhaustiveNbHits: true as const, query: '', params: '' })) });
+
   const client = {
     search: (requests: Parameters<typeof baseClient.search>[0]) => {
       const sbInput = root.querySelector<HTMLInputElement>('.ais-SearchBox-input');
       const q = sbInput?.value.trim() ?? '';
+      if (cfg.browseMode && !q) return emptyResults(requests);
       return baseClient.search(
         requests.map(req => {
           const isMedia = (req as { indexName: string }).indexName === cfg.mediaIndex;
+          const isContent = (req as { indexName: string }).indexName === cfg.contentIndex;
           const filter = isMedia
             ? buildFilter(collectionFilter, substringMode, q)
+            : isContent
+            ? (pageFilter ?? '')
             : '';
           return { ...req, params: { ...(req as { params: object }).params, filters: filter } };
         }),
@@ -83,8 +96,8 @@ function initInstance(cfg: FavConfig): void {
 
   const search = instantsearch({ indexName: cfg.mediaIndex, searchClient: client as Parameters<typeof instantsearch>[0]['searchClient'] });
 
-  const widgets = [
-    searchBox({ container: `#${cfg.uid}-searchbox`, placeholder: cfg.placeholder, showReset: true }),
+  const widgets: any[] = [
+    searchBox({ container: `#${cfg.uid}-searchbox`, placeholder: cfg.placeholder, showReset: true, showSubmit: false }),
     configure({ hitsPerPage: cfg.perPage, attributesToSnippet: [`text:${cfg.snippetLen}`], snippetEllipsisText: '…' }),
   ];
 
@@ -108,23 +121,47 @@ function initInstance(cfg: FavConfig): void {
   search.addWidgets(widgets);
   search.start();
 
-  // Browse mode — activated when search box is empty
-  let browse: BrowseMode | null = null;
-  if (cfg.browseMode && cfg.showMedia) {
-    const browseContainer = root.querySelector<HTMLElement>('.fav-browse')!;
-    const breadcrumbEl    = root.querySelector<HTMLElement>('.fav-breadcrumb')!;
-    const browseGrid      = root.querySelector<HTMLElement>('.fav-browse-grid')!;
-    const resultsEl       = root.querySelector<HTMLElement>('.fav-results')!;
+  search.on('render', () => {
+    (['media', 'content'] as const).forEach(src => {
+      const hitsEl = document.getElementById(`${cfg.uid}-hits-${src}`);
+      const pagEl  = document.getElementById(`${cfg.uid}-pag-${src}`);
+      const secEl  = document.getElementById(`${cfg.uid}-section-${src}`);
+      if (!pagEl) return;
+      const hasHits = !!hitsEl?.querySelector('.ais-Hits-item');
+      pagEl.style.display = hasHits ? '' : 'none';
+      if (secEl && src === 'content') secEl.style.display = hasHits ? '' : 'none';
+    });
+  });
 
-    browse = new BrowseMode(cfg, lb, browseContainer, breadcrumbEl, browseGrid);
+  // Lightbox — created early so BrowseMode can reference it
+  const lb = cfg.showMedia ? new Lightbox() : null;
+
+  // Browse mode — activated when search box is empty. Typing is itself a form
+  // of filtering, so an empty query shows top-level browse overviews (media
+  // Galerij, page tree) instead of hiding everything.
+  let browse: BrowseMode | null = null;
+  if (cfg.browseMode && (cfg.showMedia || cfg.showContent)) {
+    const resultsEl = root.querySelector<HTMLElement>('.fav-results')!;
+
+    if (cfg.showMedia) {
+      const browseContainer = root.querySelector<HTMLElement>('.fav-browse')!;
+      const breadcrumbEl    = root.querySelector<HTMLElement>('.fav-breadcrumb')!;
+      const browseGrid      = root.querySelector<HTMLElement>('.fav-browse-grid')!;
+      browse = new BrowseMode(cfg, lb!, browseContainer, breadcrumbEl, browseGrid);
+    }
 
     const syncBrowse = (query: string): void => {
       if (query.trim()) {
-        browse!.hide();
+        browse?.hide();
+        if (pageBrowseContainer) pageBrowseContainer.style.display = 'none';
         resultsEl.style.display = '';
       } else {
         resultsEl.style.display = 'none';
-        void browse!.enter(browse!.current() ?? undefined);
+        if (browse) void browse.enter(browse.current() ?? undefined);
+        if (pageBrowseContainer) {
+          pageBrowseContainer.style.display = '';
+          renderPageBrowseLevel(pageBrowsePath);
+        }
       }
     };
 
@@ -137,6 +174,285 @@ function initInstance(cfg: FavConfig): void {
       // Initial state
       syncBrowse(input.value);
     });
+  }
+
+  // Combined filter tree: media collections + content pages, in one panel
+  const filterTreeEl = document.getElementById(`${cfg.uid}-filter-tree`);
+  let colTreeUl: HTMLUListElement | null = null;
+  let pgTreeUl: HTMLUListElement | null = null;
+
+  function makeTopFolder(label: string, onToggle: () => void): { li: HTMLLIElement; ul: HTMLUListElement } {
+    const ul = document.createElement('ul');
+    ul.className = 'fav-col-tree';
+
+    const li = document.createElement('li');
+    li.className = 'fav-col-tree-folder';
+    const row = document.createElement('div');
+    row.className = 'fav-col-tree-row';
+    const toggle = document.createElement('button');
+    toggle.className = 'fav-col-tree-toggle';
+    toggle.type = 'button';
+    toggle.textContent = '▾';
+    toggle.addEventListener('click', () => {
+      const closed = li.classList.toggle('fav-col-tree-closed');
+      toggle.textContent = closed ? '▸' : '▾';
+    });
+    row.appendChild(toggle);
+    const lbl = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.addEventListener('change', () => {
+      ul.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
+        c.checked = cb.checked;
+        c.indeterminate = false;
+      });
+      onToggle();
+    });
+    lbl.appendChild(cb);
+    lbl.append(` ${label}`);
+    row.appendChild(lbl);
+    li.appendChild(row);
+    li.appendChild(ul);
+    return { li, ul };
+  }
+
+  if (filterTreeEl) {
+    const rootUl = document.createElement('ul');
+    rootUl.className = 'fav-col-tree';
+    filterTreeEl.appendChild(rootUl);
+
+    if (cfg.showMedia) {
+      const { li, ul } = makeTopFolder('Media', () => applyCollectionFilter());
+      rootUl.appendChild(li);
+      colTreeUl = ul;
+    }
+    if (cfg.showContent) {
+      const { li, ul } = makeTopFolder('Pagina\'s', () => applyPageFilter());
+      rootUl.appendChild(li);
+      pgTreeUl = ul;
+    }
+  }
+
+  // Page browse: folder-drill-down overview of content pages, mirroring media Galerij
+  const pageBrowseGrid = document.getElementById(`${cfg.uid}-page-browse-grid`);
+  const pageBrowseCrumb = document.getElementById(`${cfg.uid}-page-breadcrumb`);
+  const pageBrowseContainer = document.getElementById(`${cfg.uid}-page-browse`);
+
+  function getPageNodeAt(path: string[]): PgNode | null {
+    let node: Record<string, PgNode> | undefined = pageTreeData ?? undefined;
+    let current: PgNode | null = null;
+    for (const slug of path) {
+      if (!node || !node[slug]) return null;
+      current = node[slug];
+      node = current.children;
+    }
+    return current;
+  }
+
+  function renderPageBreadcrumb(path: string[]): void {
+    if (!pageBrowseCrumb) return;
+    const root = 'Pagina\'s';
+    if (!path.length) {
+      pageBrowseCrumb.innerHTML = `<span class="fav-bc-current">${root}</span>`;
+      return;
+    }
+    let html = `<a class="fav-bc-link" href="#" data-path="">${root}</a>`;
+    for (let i = 0; i < path.length; i++) {
+      const nd = getPageNodeAt(path.slice(0, i + 1));
+      const label = nd?.title ?? path[i];
+      html += '<span class="fav-bc-sep">›</span>';
+      html += i === path.length - 1
+        ? `<span class="fav-bc-current">${label}</span>`
+        : `<a class="fav-bc-link" href="#" data-path="${path.slice(0, i + 1).join('/')}">${label}</a>`;
+    }
+    pageBrowseCrumb.innerHTML = html;
+    pageBrowseCrumb.querySelectorAll<HTMLAnchorElement>('.fav-bc-link').forEach(link => {
+      link.addEventListener('click', e => {
+        e.preventDefault();
+        const p = link.dataset['path'];
+        renderPageBrowseLevel(p ? p.split('/') : []);
+      });
+    });
+  }
+
+  function nodeIsActive(node: PgNode): boolean {
+    if (!activePageUrls) return true;
+    const hasChildren = Object.keys(node.children).length > 0;
+    if (!hasChildren) return activePageUrls.has(node.url);
+    return Object.values(node.children).some(nodeIsActive);
+  }
+
+  function setActivePageUrls(urls: string[] | null): void {
+    activePageUrls = urls ? new Set(urls) : null;
+    if (pageBrowseContainer && pageBrowseContainer.style.display !== 'none') {
+      renderPageBrowseLevel(pageBrowsePath);
+    }
+  }
+
+  function renderPageBrowseLevel(path: string[]): void {
+    if (!pageBrowseGrid || !pageTreeData) return;
+    pageBrowsePath = path;
+    renderPageBreadcrumb(path);
+
+    let node: Record<string, PgNode> = pageTreeData;
+    for (const slug of path) node = node[slug]?.children ?? {};
+
+    pageBrowseGrid.innerHTML = '';
+    pageBrowseGrid.className = 'fav-browse-grid fav-col-grid';
+    const entries = Object.entries(node)
+      .filter(([, nd]) => nodeIsActive(nd))
+      .sort(([, a], [, b]) => a.title.localeCompare(b.title, 'nl'));
+    if (!entries.length) {
+      pageBrowseGrid.innerHTML = '<p>Geen pagina\'s gevonden.</p>';
+      return;
+    }
+    for (const [slug, nd] of entries) {
+      const hasChildren = Object.keys(nd.children).length > 0;
+      const card = document.createElement(hasChildren ? 'div' : 'a') as HTMLElement;
+      card.className = 'fav-col-card';
+      if (!hasChildren) (card as HTMLAnchorElement).href = nd.url;
+      card.innerHTML =
+        `<div class="fav-col-thumb"><span class="fav-col-icon">${hasChildren ? '📁' : '📄'}</span></div>` +
+        `<div class="fav-col-label">${nd.title}</div>`;
+      if (hasChildren) card.addEventListener('click', () => renderPageBrowseLevel([...path, slug]));
+      pageBrowseGrid.appendChild(card);
+    }
+  }
+
+  // Page tree filter (content index, hierarchy from URL path)
+  if (pgTreeUl) {
+    fetch(`${cfg.meiliUrl}/indexes/${cfg.contentIndex}/search`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: '', limit: 1000, attributesToRetrieve: ['id', 'title', 'url'] }),
+    })
+      .then(r => r.json())
+      .then((data: { hits?: Array<{ id: string; title: string; url: string }> }) => {
+        const docs = (data.hits ?? []).filter(d => d.url);
+        if (!docs.length) return;
+        const baseUrl = docs[0].url.replace(/^(https?:\/\/[^/]+).*/, '$1');
+        const urlToTitle = new Map(docs.map(d => [d.url, d.title]));
+
+        const pgTree: Record<string, PgNode> = {};
+
+        const slugTitle = (slug: string): string =>
+          slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        const isAutoSlug = (slug: string): boolean => /^\d/.test(slug);
+
+        // Two top-level buckets: normal tree + "(overige)" for auto-slugged pages
+        const overige: PgNode[] = [];
+
+        const sorted = [...docs].sort((a, b) => a.url.length - b.url.length);
+        for (const doc of sorted) {
+          const path = doc.url.slice(baseUrl.length).replace(/^\/|\/$/g, '');
+          if (!path) continue;
+          const segs = path.split('/');
+
+          // If any segment is an auto-slug, put in overige (top-level only: first segment)
+          if (isAutoSlug(segs[0])) {
+            overige.push({ url: doc.url, title: doc.title || slugTitle(segs[0]), children: {} });
+            continue;
+          }
+
+          let node = pgTree;
+          for (let i = 0; i < segs.length; i++) {
+            const slug = segs[i];
+            if (!node[slug]) {
+              const partUrl = `${baseUrl}/${segs.slice(0, i + 1).join('/')}/`;
+              node[slug] = { url: partUrl, title: urlToTitle.get(partUrl) ?? slugTitle(slug), children: {} };
+            }
+            node = node[slug].children;
+          }
+        }
+
+        // Add overige bucket if needed
+        if (overige.length) {
+          pgTree['__overige__'] = {
+            url: '',
+            title: '(overige)',
+            children: Object.fromEntries(overige.map((n, i) => [String(i), n])),
+          };
+        }
+
+        function renderPgNode(tree: Record<string, PgNode>): HTMLUListElement {
+          const ul = document.createElement('ul');
+          ul.className = 'fav-col-tree';
+          for (const [, nd] of Object.entries(tree).sort(([, a], [, b]) => a.title.localeCompare(b.title, 'nl'))) {
+            const hasChildren = Object.keys(nd.children).length > 0;
+            const li = document.createElement('li');
+            li.className = hasChildren ? 'fav-col-tree-folder' : 'fav-col-tree-leaf';
+            const row = document.createElement('div');
+            row.className = 'fav-col-tree-row';
+            if (hasChildren) {
+              li.classList.add('fav-col-tree-closed');
+              const tog = document.createElement('button');
+              tog.className = 'fav-col-tree-toggle';
+              tog.type = 'button';
+              tog.textContent = '▸';
+              tog.addEventListener('click', () => {
+                const closed = li.classList.toggle('fav-col-tree-closed');
+                tog.textContent = closed ? '▸' : '▾';
+              });
+              row.appendChild(tog);
+            }
+            const label = document.createElement('label');
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = true;
+            cb.dataset['pageUrl'] = nd.url;
+            cb.addEventListener('change', () => {
+              if (hasChildren) {
+                li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => { c.checked = cb.checked; c.indeterminate = false; });
+              }
+              applyPageFilter();
+              updatePgParents(li);
+            });
+            label.appendChild(cb);
+            label.append(` ${nd.title}`);
+            row.appendChild(label);
+            li.appendChild(row);
+            if (hasChildren) li.appendChild(renderPgNode(nd.children));
+            ul.appendChild(li);
+          }
+          return ul;
+        }
+
+        function updatePgParents(el: HTMLElement): void {
+          const folder = el.parentElement?.closest<HTMLElement>('.fav-col-tree-folder');
+          if (!folder) return;
+          const ownCb = folder.querySelector<HTMLInputElement>(':scope > .fav-col-tree-row input');
+          const allCbs = [...folder.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].filter(c => c !== ownCb);
+          if (ownCb && allCbs.length) {
+            const all = allCbs.every(c => c.checked), none = allCbs.every(c => !c.checked);
+            ownCb.checked = all;
+            ownCb.indeterminate = !all && !none;
+          }
+          updatePgParents(folder);
+        }
+
+        const built = renderPgNode(pgTree);
+        while (built.firstChild) pgTreeUl!.appendChild(built.firstChild);
+
+        pageTreeData = pgTree;
+        if (pageBrowseGrid) renderPageBrowseLevel(pageBrowsePath);
+      })
+      .catch(() => undefined);
+  }
+
+  function applyPageFilter(): void {
+    const allCbs = [...(pgTreeUl?.querySelectorAll<HTMLInputElement>('input[data-page-url]') ?? [])];
+    const visibleCbs = allCbs.filter(cb => !cb.closest('li')?.hidden);
+    const checked = visibleCbs.filter(cb => cb.checked).map(cb => cb.dataset['pageUrl']!).filter(Boolean);
+    const allChecked = checked.length === visibleCbs.length;
+    pageFilter = allChecked
+      ? null
+      : checked.length
+        ? checked.map(u => `url = "${u}"`).join(' OR ')
+        : 'url = "__avpvh_no_match__"';
+    search.mainIndex.getHelper()?.search();
+
+    setActivePageUrls(allChecked ? null : checked);
   }
 
   // Section collapse
@@ -160,6 +476,10 @@ function initInstance(cfg: FavConfig): void {
         const filters = document.getElementById(`${cfg.uid}-collection-filter`);
         if (filters) filters.style.display = cb.checked ? '' : 'none';
       }
+      if (src === 'content') {
+        const pgPanel = document.getElementById(`${cfg.uid}-page-filter`);
+        if (pgPanel) pgPanel.style.display = cb.checked ? '' : 'none';
+      }
     });
   });
 
@@ -170,9 +490,8 @@ function initInstance(cfg: FavConfig): void {
     search.mainIndex.getHelper()?.search();
   });
 
-  // Collection checkboxes from facets
-  const collectionList = document.getElementById(`${cfg.uid}-collection-list`);
-  if (collectionList) {
+  // Collection tree from facets
+  if (colTreeUl) {
     fetch(`${cfg.meiliUrl}/indexes/${cfg.mediaIndex}/search`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
@@ -182,41 +501,131 @@ function initInstance(cfg: FavConfig): void {
       .then((data: { facetDistribution?: Record<string, Record<string, number>> }) => {
         const cols = data.facetDistribution?.['collection'];
         if (!cols) return;
-        Object.keys(cols)
-          .sort()
-          .forEach(name => {
-            const li = document.createElement('li');
-            const cid = `${cfg.uid}-col-${name.replace(/\W/g, '_')}`;
-            li.innerHTML = `<label><input type="checkbox" id="${cid}" checked> ${name} <span style="color:#aaa;font-size:.8em">(${cols[name]})</span></label>`;
-            li.querySelector('input')!.addEventListener('change', applyCollectionFilter);
-            collectionList.appendChild(li);
-          });
+        const built = buildColTree(cols);
+        while (built.firstChild) colTreeUl!.appendChild(built.firstChild);
       })
       .catch(() => undefined);
   }
 
-  function applyCollectionFilter(): void {
-    const checked: string[] = [];
-    collectionList?.querySelectorAll<HTMLInputElement>('input:checked').forEach(cb => {
-      const label = cb.closest('label')?.textContent?.trim().replace(/\s*\(\d+\)$/, '') ?? '';
-      if (label) checked.push(label);
-    });
-    collectionFilter = checked.length
-      ? checked.map(c => `collection = "${c}"`).join(' OR ')
-      : null;
-    search.mainIndex.getHelper()?.search();
+  function buildColTree(cols: Record<string, number>): HTMLUListElement {
+    // Build nested tree structure from flat paths
+    const tree: Record<string, any> = {};
+    for (const [path, count] of Object.entries(cols)) {
+      const parts = path.split('/');
+      let node = tree;
+      for (let i = 0; i < parts.length; i++) {
+        if (!node[parts[i]]) node[parts[i]] = { _path: parts.slice(0, i + 1).join('/'), _count: 0, _children: {} };
+        if (i === parts.length - 1) node[parts[i]]._count = count;
+        node = node[parts[i]]._children;
+      }
+    }
+    return renderColTreeNode(tree);
   }
 
-  document.getElementById(`${cfg.uid}-refine-collection`)?.addEventListener('input', function (this: HTMLInputElement) {
+  function renderColTreeNode(tree: Record<string, any>): HTMLUListElement {
+    const ul = document.createElement('ul');
+    ul.className = 'fav-col-tree';
+    for (const [name, info] of Object.entries(tree).sort(([a], [b]) => a.localeCompare(b))) {
+      const hasChildren = Object.keys(info._children ?? {}).length > 0;
+      const li = document.createElement('li');
+      li.className = hasChildren ? 'fav-col-tree-folder' : 'fav-col-tree-leaf';
+
+      const row = document.createElement('div');
+      row.className = 'fav-col-tree-row';
+
+      if (hasChildren) {
+        li.classList.add('fav-col-tree-closed');
+        const toggle = document.createElement('button');
+        toggle.className = 'fav-col-tree-toggle';
+        toggle.type = 'button';
+        toggle.textContent = '▸';
+        toggle.addEventListener('click', () => {
+          const closed = li.classList.toggle('fav-col-tree-closed');
+          toggle.textContent = closed ? '▸' : '▾';
+        });
+        row.appendChild(toggle);
+      }
+
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      if (!hasChildren) cb.dataset['leafPath'] = info._path;
+      cb.addEventListener('change', () => {
+        if (hasChildren) {
+          li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
+            c.checked = cb.checked;
+            c.indeterminate = false;
+          });
+        }
+        applyCollectionFilter();
+        updateColParents(li);
+      });
+      label.appendChild(cb);
+      label.append(` ${name}`);
+      if (!hasChildren) {
+        const countEl = document.createElement('span');
+        countEl.className = 'fav-col-tree-count';
+        countEl.textContent = ` (${info._count})`;
+        label.appendChild(countEl);
+      }
+      row.appendChild(label);
+      li.appendChild(row);
+
+      if (hasChildren) li.appendChild(renderColTreeNode(info._children));
+      ul.appendChild(li);
+    }
+    return ul;
+  }
+
+  function updateColParents(el: HTMLElement): void {
+    const folder = el.parentElement?.closest<HTMLElement>('.fav-col-tree-folder');
+    if (!folder) return;
+    const ownCb = folder.querySelector<HTMLInputElement>(':scope > .fav-col-tree-row input');
+    const leaves = [...folder.querySelectorAll<HTMLInputElement>('.fav-col-tree-leaf input[type=checkbox]')];
+    if (ownCb && leaves.length) {
+      const all = leaves.every(c => c.checked);
+      const none = leaves.every(c => !c.checked);
+      ownCb.checked = all;
+      ownCb.indeterminate = !all && !none;
+    }
+    updateColParents(folder);
+  }
+
+  function applyCollectionFilter(): void {
+    const allLeaves = [...(colTreeUl?.querySelectorAll<HTMLInputElement>('.fav-col-tree-leaf input[type=checkbox]') ?? [])];
+    const visibleLeaves = allLeaves.filter(cb => !cb.closest<HTMLElement>('.fav-col-tree-leaf')?.hidden);
+    const checked = visibleLeaves.filter(cb => cb.checked).map(cb => cb.dataset['leafPath']!).filter(Boolean);
+    const allChecked = checked.length === visibleLeaves.length;
+
+    collectionFilter = allChecked
+      ? null
+      : checked.length
+        ? checked.map(p => `collection = "${p}"`).join(' OR ')
+        : 'collection = "__avpvh_no_match__"';
+    search.mainIndex.getHelper()?.search();
+
+    // Sync browse mode: show only tiles for active collections
+    browse?.setActiveCollections(allChecked ? null : checked);
+  }
+
+  document.getElementById(`${cfg.uid}-refine-filter`)?.addEventListener('input', function (this: HTMLInputElement) {
     const term = this.value.toLowerCase();
-    collectionList?.querySelectorAll<HTMLLIElement>('li').forEach(li => {
-      li.style.display = li.textContent?.toLowerCase().includes(term) ? '' : 'none';
+    if (!filterTreeEl) return;
+    if (!term) {
+      filterTreeEl.querySelectorAll<HTMLElement>('li').forEach(li => { li.hidden = false; });
+      return;
+    }
+    filterTreeEl.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(li => {
+      li.hidden = !(li.textContent?.toLowerCase().includes(term) ?? false);
+    });
+    filterTreeEl.querySelectorAll<HTMLElement>('.fav-col-tree-folder').forEach(folder => {
+      folder.hidden = !folder.querySelector('.fav-col-tree-leaf:not([hidden])');
     });
   });
 
   // Lightbox
-  if (cfg.showMedia) {
-    const lb = new Lightbox();
+  if (cfg.showMedia && lb) {
     const hitsEl = document.getElementById(`${cfg.uid}-hits-media`);
 
     hitsEl?.addEventListener('click', e => {
@@ -225,7 +634,7 @@ function initInstance(cfg: FavConfig): void {
       e.preventDefault();
 
       const hitId = link.dataset['id'] ?? '';
-      const collection = hitId.split('__')[0] ?? '';
+      const collection = link.dataset['collection'] ?? '';
       if (!collection) return;
 
       lb.open([{ url: '', caption: 'Laden…', text: '' }], 0);

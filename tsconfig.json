@@ -5,10 +5,10 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "lib": ["ES2020", "DOM"],
+    "lib": ["ES2022", "DOM"],
     "outDir": "dist/js",
-    "rootDir": "src/ts",
+    "rootDir": ".",
     "skipLibCheck": true
   },
-  "include": ["src/ts/**/*", "config/**/*"]
+  "include": ["src/ts/**/*"]
 }

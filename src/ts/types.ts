@@ -24,6 +24,7 @@ export interface FavConfig {
   showMedia: boolean;
   showContent: boolean;
   browseMode: boolean;
+  browseRootLabel: string;
   placeholder: string;
 }
 

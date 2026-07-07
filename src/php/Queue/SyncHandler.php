@@ -27,13 +27,16 @@ final class SyncHandler {
 
 		$index  = Settings::content_index();
 		$item   = PostIndexer::from_post( $post );
-		if ( $item === null ) return;
+		if ( $item === null ) {
+			$client->delete( $index, (string) $post_id );
+			return;
+		}
 
 		$client->upsert( $index, $item );
 	}
 
 	private static function client(): MeilisearchClient {
 		$s = Settings::get();
-		return new MeilisearchClient( $s['meili_url'], $s['meili_key'] );
+		return new MeilisearchClient( $s['meili_url'], Settings::admin_key() );
 	}
 }

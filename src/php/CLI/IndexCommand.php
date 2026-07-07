@@ -13,11 +13,18 @@ final class IndexCommand {
 		\WP_CLI::add_command( 'fav reindex', [ self::class, 'reindex' ] );
 	}
 
-	public static function run( array $args, array $assoc ): void {
+	/**
+	 * Core reindex logic, shared between the WP-CLI command and the admin
+	 * "Reindex WordPress content" REST endpoint. Always uses PostIndexer, so
+	 * every entry point produces documents with the same id scheme, content
+	 * filtering, and collection field.
+	 *
+	 * @param ?list<string> $post_types Defaults to the configured post types.
+	 */
+	public static function reindex_posts( ?array $post_types = null ): int {
 		$s      = Settings::get();
-		$client = new MeilisearchClient( $s['meili_url'], $s['meili_key'] );
-		$types  = $assoc['post-type'] ?? implode( ',', $s['post_types'] );
-		$types  = array_map( 'trim', explode( ',', $types ) );
+		$client = new MeilisearchClient( $s['meili_url'], Settings::admin_key() );
+		$types  = $post_types ?? $s['post_types'];
 
 		$posts = get_posts( [
 			'post_type'      => $types,
@@ -27,8 +34,6 @@ final class IndexCommand {
 		] );
 
 		$index = Settings::content_index();
-		$bar   = \WP_CLI\Utils\make_progress_bar( 'Indexing', count( $posts ) );
-
 		$batch = [];
 		foreach ( $posts as $post ) {
 			$item = PostIndexer::from_post( $post );
@@ -37,17 +42,24 @@ final class IndexCommand {
 				$client->upsert( $index, ...$batch );
 				$batch = [];
 			}
-			$bar->tick();
 		}
 		if ( $batch ) $client->upsert( $index, ...$batch );
-		$bar->finish();
 
-		\WP_CLI::success( sprintf( 'Indexed %d posts into %s.', count( $posts ), $index ) );
+		return count( $posts );
+	}
+
+	public static function run( array $args, array $assoc ): void {
+		$s     = Settings::get();
+		$types = $assoc['post-type'] ?? implode( ',', $s['post_types'] );
+		$types = array_map( 'trim', explode( ',', $types ) );
+
+		$count = self::reindex_posts( $types );
+		\WP_CLI::success( sprintf( 'Indexed %d posts into %s.', $count, Settings::content_index() ) );
 	}
 
 	public static function reindex( array $args, array $assoc ): void {
 		$s      = Settings::get();
-		$client = new MeilisearchClient( $s['meili_url'], $s['meili_key'] );
+		$client = new MeilisearchClient( $s['meili_url'], Settings::admin_key() );
 		$index  = Settings::content_index();
 		$client->delete_all( $index );
 		\WP_CLI::log( 'Cleared index ' . $index );

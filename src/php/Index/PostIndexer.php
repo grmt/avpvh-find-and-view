@@ -4,9 +4,8 @@ namespace Avpvh\FindAndView\Index;
 
 final class PostIndexer {
 	public static function from_post( \WP_Post $post ): ?IndexItem {
-		$content = wp_strip_all_tags(
-			apply_filters( 'the_content', $post->post_content )
-		);
+		$own_text = trim( wp_strip_all_tags( strip_shortcodes( $post->post_content ) ) );
+		if ( mb_strlen( $own_text ) < 20 ) return null;
 
 		$tags = [];
 		foreach ( get_object_taxonomies( $post->post_type, 'objects' ) as $tax ) {
@@ -23,7 +22,7 @@ final class PostIndexer {
 			id:          (string) $post->ID,
 			type:        $post->post_type,
 			title:       $post->post_title,
-			text:        $content,
+			text:        $own_text,
 			collection:  $collection,
 			url:         get_permalink( $post ) ?: '',
 			thumb_url:   (string) get_the_post_thumbnail_url( $post, 'medium' ),

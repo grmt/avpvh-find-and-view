@@ -16,10 +16,19 @@ final class Settings {
 	}
 
 	public static function content_index(): string {
-		return self::get()['index_prefix'] . '_content';
+		$s = self::get();
+		return ($s['content_index'] ?? '') ?: $s['index_prefix'] . '_content';
 	}
 
 	public static function media_index(): string {
 		return self::get()['index_prefix'] . '_media';
+	}
+
+	public static function admin_key(): string {
+		$key_file = '/run/secrets/meilisearch_master_key';
+		if ( is_readable( $key_file ) ) {
+			return trim( (string) file_get_contents( $key_file ) );
+		}
+		return (string) ( self::get()['meili_admin_key'] ?? '' );
 	}
 }

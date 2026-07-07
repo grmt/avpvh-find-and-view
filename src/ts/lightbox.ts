@@ -63,15 +63,15 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-prev')!.addEventListener('click', () => this.show(this.idx - 1));
     this.el.querySelector('.fav-lb-next')!.addEventListener('click', () => this.show(this.idx + 1));
 
-    const izBtns = this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-iz .fav-lb-zbtn');
-    izBtns[0].addEventListener('click', () => this.setImgZoom(this.imgZoom / 1.3));
-    izBtns[1].addEventListener('click', () => this.setImgZoom(1));
-    izBtns[2].addEventListener('click', () => this.setImgZoom(this.imgZoom * 1.3));
+    const izBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-iz .fav-lb-zbtn'));
+    izBtns[0]?.addEventListener('click', () => this.setImgZoom(this.imgZoom / 1.3));
+    izBtns[1]?.addEventListener('click', () => this.setImgZoom(1));
+    izBtns[2]?.addEventListener('click', () => this.setImgZoom(this.imgZoom * 1.3));
 
-    const tzBtns = this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-text-bar .fav-lb-zbtn');
-    tzBtns[0].addEventListener('click', () => this.setTxtZoom(this.txtZoom / 1.2));
-    tzBtns[1].addEventListener('click', () => this.setTxtZoom(1));
-    tzBtns[2].addEventListener('click', () => this.setTxtZoom(this.txtZoom * 1.2));
+    const tzBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-text-bar .fav-lb-zbtn'));
+    tzBtns[0]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom / 1.2));
+    tzBtns[1]?.addEventListener('click', () => this.setTxtZoom(1));
+    tzBtns[2]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom * 1.2));
 
     this.el.querySelector('.fav-lb-img-wrap')!.addEventListener('wheel', (e: Event) => {
       const we = e as WheelEvent;

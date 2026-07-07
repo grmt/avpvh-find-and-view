@@ -3,6 +3,7 @@
 namespace Avpvh\FindAndView;
 
 use Avpvh\FindAndView\Admin\SettingsPage;
+use Avpvh\FindAndView\Admin\TreeController;
 use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Observer\PostObserver;
 use Avpvh\FindAndView\Queue\SyncQueue;
@@ -11,6 +12,13 @@ use Avpvh\FindAndView\Shortcode\FindAndViewShortcode;
 final class Main {
 	public static function init( string $plugin_file ): void {
 		add_action( 'init', [ self::class, 'boot' ] );
+		add_filter(
+			'plugin_action_links_' . plugin_basename( $plugin_file ),
+			static fn( array $links ) => array_merge(
+				[ 'settings' => '<a href="' . admin_url( 'options-general.php?page=avpvh-find-and-view' ) . '">' . __( 'Settings', 'default' ) . '</a>' ],
+				$links
+			)
+		);
 	}
 
 	public static function boot(): void {
@@ -22,6 +30,7 @@ final class Main {
 		( new PostObserver( $post_types ) )->register();
 		( new FindAndViewShortcode() )->register();
 		( new SettingsPage() )->register();
+		( new TreeController() )->register();
 
 		IndexCommand::register();
 	}
