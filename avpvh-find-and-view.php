@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:  AVPVH Find and View
- * Description:  Find and view photos, archaeological finds, and scanned documents stored in Google Drive, powered by Meilisearch.
- * Version:      0.1.0
+ * Description:  Find and view photos, archaeological finds, and scanned documents, powered by Meilisearch.
+ * Version:      0.1.8
  * Author:       grmt
  * License:      MIT
  * Requires PHP: 8.2
@@ -19,7 +19,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-require_once __DIR__ . '/dist/vendor/autoload.php';
-require_once __DIR__ . '/dist/class-main.php';
+define( 'AVPVH_FAV_VERSION', '0.1.8' );
+
+require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/src/php/class-main.php';
 
 Main::init( __FILE__ );
