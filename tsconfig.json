@@ -6,6 +6,7 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "lib": ["ES2022", "DOM"],
+    "types": ["vite/client"],
     "outDir": "dist/js",
     "rootDir": ".",
     "skipLibCheck": true

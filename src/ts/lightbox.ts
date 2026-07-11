@@ -1,7 +1,28 @@
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Vite's `?url` asset imports don't resolve correctly in this IIFE lib build,
+// so derive the worker's URL from wherever this script itself was loaded from
+// (search.iife.js and pdf.worker.js are always deployed side by side). Served
+// as .js rather than .mjs since some servers map .mjs to a MIME type Chrome
+// refuses to execute as a module script. Reuses search.iife.js's own cache-
+// busting ?ver= query so the worker isn't served stale from cache after a
+// deploy — it must always match the pdfjs-dist version bundled into this file.
+const thisScriptUrl = (document.currentScript as HTMLScriptElement | null)?.src;
+let workerSrc = 'pdf.worker.js';
+if (thisScriptUrl) {
+  const base = new URL(thisScriptUrl);
+  const worker = new URL('pdf.worker.js', base);
+  worker.search = base.search;
+  workerSrc = worker.href;
+}
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+
 export interface LightboxItem {
   url: string;
   caption: string;
   text: string;
+  kind?: 'image' | 'pdf';
+  page?: number;
 }
 
 export class Lightbox {
@@ -11,6 +32,9 @@ export class Lightbox {
   private imgZoom = 1;
   private txtZoom = 1;
   private onClose: (() => void) | null = null;
+  private pdfDocs = new Map<string, pdfjsLib.PDFDocumentLoadingTask>();
+  private currentBlobUrl: string | null = null;
+  private showToken = 0;
 
   private readonly keyHandler = (e: KeyboardEvent): void => {
     if (!this.el) return;
@@ -40,6 +64,7 @@ export class Lightbox {
         <div class="fav-lb-nav"><button class="fav-lb-btn fav-lb-prev">&#x2039;</button></div>
         <div class="fav-lb-img-wrap">
           <img class="fav-lb-img" alt="">
+          <div class="fav-lb-loading" style="display:none">Laden…</div>
           <div class="fav-lb-iz">
             <button class="fav-lb-zbtn">&#x2212;</button>
             <button class="fav-lb-zbtn">1:1</button>
@@ -96,6 +121,10 @@ export class Lightbox {
     document.body.removeChild(this.el);
     this.el = null;
     document.removeEventListener('keydown', this.keyHandler);
+    if (this.currentBlobUrl) URL.revokeObjectURL(this.currentBlobUrl);
+    this.currentBlobUrl = null;
+    this.pdfDocs.forEach(task => { void task.destroy().catch(() => undefined); });
+    this.pdfDocs.clear();
     this.onClose?.();
   }
 
@@ -103,8 +132,33 @@ export class Lightbox {
     this.idx = Math.max(0, Math.min(this.items.length - 1, idx));
     const item = this.items[this.idx]!;
     const el = this.el!;
+    const token = ++this.showToken;
 
-    (el.querySelector('.fav-lb-img') as HTMLImageElement).src = item.url;
+    const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
+    const loadingEl = el.querySelector('.fav-lb-loading') as HTMLElement;
+
+    if (item.kind === 'pdf' && item.page != null) {
+      imgEl.style.display = 'none';
+      loadingEl.style.display = '';
+      loadingEl.textContent = 'Laden…';
+      this.renderPdfPage(item.url, item.page)
+        .then(blobUrl => {
+          if (token !== this.showToken) return; // superseded by newer navigation
+          if (!blobUrl) { loadingEl.textContent = 'Kon PDF-pagina niet laden.'; return; }
+          this.setImage(blobUrl);
+          imgEl.style.display = '';
+          loadingEl.style.display = 'none';
+        })
+        .catch(() => {
+          if (token !== this.showToken) return;
+          loadingEl.textContent = 'Kon PDF-pagina niet laden.';
+        });
+    } else {
+      loadingEl.style.display = 'none';
+      imgEl.style.display = '';
+      this.setImage(item.url);
+    }
+
     el.querySelector('.fav-lb-caption')!.textContent = item.caption;
     el.querySelector('.fav-lb-counter')!.textContent = `${this.idx + 1} / ${this.items.length}`;
     (el.querySelector('.fav-lb-prev') as HTMLButtonElement).disabled = this.idx === 0;
@@ -113,6 +167,37 @@ export class Lightbox {
     const content = el.querySelector('.fav-lb-text-content')!;
     content.innerHTML = item.text || '<span class="fav-lb-text-empty">Geen tekst beschikbaar.</span>';
     content.scrollTop = 0;
+  }
+
+  private setImage(src: string): void {
+    const imgEl = this.el!.querySelector('.fav-lb-img') as HTMLImageElement;
+    if (this.currentBlobUrl) URL.revokeObjectURL(this.currentBlobUrl);
+    this.currentBlobUrl = src.startsWith('blob:') ? src : null;
+    imgEl.src = src;
+  }
+
+  private async renderPdfPage(url: string, pageNum: number): Promise<string | null> {
+    try {
+      let task = this.pdfDocs.get(url);
+      if (!task) {
+        task = pdfjsLib.getDocument({ url });
+        this.pdfDocs.set(url, task);
+      }
+      const doc = await task.promise;
+      const page = await doc.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d')!;
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      return await new Promise<string | null>(resolve => {
+        canvas.toBlob(blob => resolve(blob ? URL.createObjectURL(blob) : null), 'image/png');
+      });
+    } catch (err) {
+      console.error('[avpvh-find-and-view] PDF page render failed:', err);
+      return null;
+    }
   }
 
   private setImgZoom(z: number): void {

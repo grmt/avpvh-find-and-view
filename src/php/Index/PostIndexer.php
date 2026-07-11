@@ -4,6 +4,8 @@ namespace Avpvh\FindAndView\Index;
 
 final class PostIndexer {
 	public static function from_post( \WP_Post $post ): ?IndexItem {
+		if ( $post->post_status !== 'publish' ) return null;
+
 		$own_text = trim( wp_strip_all_tags( strip_shortcodes( $post->post_content ) ) );
 		if ( mb_strlen( $own_text ) < 20 ) return null;
 
