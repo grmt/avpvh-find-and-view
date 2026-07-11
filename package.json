@@ -26,6 +26,7 @@
   "dependencies": {
     "@meilisearch/instant-meilisearch": "^0.19",
     "instantsearch.js": "^4",
+    "pdfjs-dist": "^4.10.38",
     "photoswipe": "^5.4.4"
   },
   "devDependencies": {

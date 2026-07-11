@@ -42,9 +42,14 @@ function hitToHtml(hit: MeiliHit, withLink: boolean): string {
     ? `${hit.title || hit.collection} — pagina ${hit.page_number}`
     : (hit.title || hit.collection || hit.id);
 
-  if (hit.thumb_url && !withLink) {
+  if (!withLink) {
+    // Media hit: always clickable into the lightbox, even without a thumbnail
+    // image (e.g. PDF pages that only have extracted text, no page image).
+    const thumbInner = hit.thumb_url
+      ? `<img src="${hit.thumb_url}" alt="" loading="lazy">`
+      : `<span class="fav-thumb-placeholder">📄</span>`;
     return `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}" data-collection="${hit.collection}">
-      <img src="${hit.thumb_url}" alt="" loading="lazy"></a>
+      ${thumbInner}</a>
       <div class="fav-body"><h3>${title}</h3><p>${snip}</p></div>`;
   }
   const img = hit.thumb_url
@@ -668,7 +673,10 @@ function initInstance(cfg: FavConfig): void {
               .map(p => `<p style="margin:0 0 .8em">${p.replace(/\n/g, '<br>')}</p>`)
               .join('');
             const caption = (h.collection ?? '') + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
-            return { url: h.url, caption, text: html };
+            const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
+            return isPdf
+              ? { url: h.url, caption, text: html, kind: 'pdf' as const, page: h.page_number ?? undefined }
+              : { url: h.url, caption, text: html };
           });
 
           const startIdx = fetchedHits.findIndex(h => h.id === hitId);

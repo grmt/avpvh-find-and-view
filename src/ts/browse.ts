@@ -267,13 +267,14 @@ export class BrowseMode {
     hits.forEach(hit => {
       const div = document.createElement('div');
       div.className = 'fav-browse-item';
-      const thumb = hit.thumb_url || hit.url;
-      div.innerHTML = thumb
-        ? `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}">` +
-          `<img src="${thumb}" alt="" loading="lazy">` +
-          (hit.page_number != null ? `<span class="fav-page-badge">${hit.page_number}</span>` : '') +
-          `</a>`
-        : `<div class="fav-body"><span>${hit.page_number ?? hit.title ?? name.split('/').at(-1)}</span></div>`;
+      const thumbInner = hit.thumb_url
+        ? `<img src="${hit.thumb_url}" alt="" loading="lazy">`
+        : `<span class="fav-thumb-placeholder">📄</span>`;
+      div.innerHTML =
+        `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}">` +
+        thumbInner +
+        (hit.page_number != null ? `<span class="fav-page-badge">${hit.page_number}</span>` : '') +
+        `</a>`;
       this.gridEl.appendChild(div);
     });
 
@@ -316,14 +317,17 @@ export class BrowseMode {
         .filter(h => h.url)
         .sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
 
-      const items: LightboxItem[] = allHits.map(h => ({
-        url: h.url,
+      const items: LightboxItem[] = allHits.map(h => {
         // Show only leaf collection name + page number (not full path)
-        caption: collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : ''),
-        text: h.text
+        const caption = collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : '');
+        const text = h.text
           ? h.text.split(/\n\n+/).map(p => `<p style="margin:0 0 .8em">${p.replace(/\n/g, '<br>')}</p>`).join('')
-          : '',
-      }));
+          : '';
+        const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
+        return isPdf
+          ? { url: h.url, caption, text, kind: 'pdf' as const, page: h.page_number ?? undefined }
+          : { url: h.url, caption, text };
+      });
 
       const startIdx = allHits.findIndex(h => h.id === hitId);
       this.lb.open(items, startIdx < 0 ? 0 : startIdx);
