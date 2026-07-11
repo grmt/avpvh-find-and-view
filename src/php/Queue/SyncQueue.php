@@ -3,27 +3,26 @@
 namespace Avpvh\FindAndView\Queue;
 
 final class SyncQueue {
-	const GROUP        = 'fav';
-	const SYNC_ACTION  = 'fav_queue_sync';
+	const SYNC_ACTION   = 'fav_queue_sync';
 	const DELETE_ACTION = 'fav_queue_delete';
-	const DEBOUNCE     = 5;
+	const DEBOUNCE      = 5;
 
+	// Uses WP-Cron rather than Action Scheduler: the latter is only present
+	// when some other active plugin happens to bundle it, which left sync
+	// silently disabled on sites without such a plugin (function_exists()
+	// guard was a no-op there). WP-Cron is core, so it's always available.
 	public static function schedule_sync( string $type, int|string $id ): void {
-		if ( ! function_exists( 'as_schedule_single_action' ) ) {
-			return;
-		}
-		$args = [ 'type' => $type, 'id' => $id ];
-		as_unschedule_all_actions( self::SYNC_ACTION, $args, self::GROUP );
-		as_schedule_single_action( time() + self::DEBOUNCE, self::SYNC_ACTION, $args, self::GROUP );
+		$args = [ $type, $id ];
+		wp_clear_scheduled_hook( self::SYNC_ACTION, $args );
+		wp_clear_scheduled_hook( self::DELETE_ACTION, $args );
+		wp_schedule_single_event( time() + self::DEBOUNCE, self::SYNC_ACTION, $args );
 	}
 
 	public static function schedule_delete( string $type, int|string $id ): void {
-		if ( ! function_exists( 'as_enqueue_async_action' ) ) {
-			return;
-		}
-		$args = [ 'type' => $type, 'id' => $id ];
-		as_unschedule_all_actions( self::SYNC_ACTION, $args, self::GROUP );
-		as_enqueue_async_action( self::DELETE_ACTION, $args, self::GROUP );
+		$args = [ $type, $id ];
+		wp_clear_scheduled_hook( self::SYNC_ACTION, $args );
+		wp_clear_scheduled_hook( self::DELETE_ACTION, $args );
+		wp_schedule_single_event( time(), self::DELETE_ACTION, $args );
 	}
 
 	public static function register_handlers(): void {
