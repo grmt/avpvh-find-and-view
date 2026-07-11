@@ -30,13 +30,14 @@ fs.writeFileSync('${PKG_FILE}', JSON.stringify(pkg, null, 2) + '\n');
 
 # 5. Build
 npx vite build --config config/vite/search.config.ts
-npx vite build --config config/vite/tree.config.ts
 
 # 6. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/
-dest="user@server.example:/srv/wordpress/wp-content-site2/plugins/avpvh-find-and-view/"
+for site in site1 site2 site3; do
+	dest="user@server.example:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
 
-rsync -av --omit-dir-times avpvh-find-and-view.php "$dest"
-rsync -av --omit-dir-times dist/ "${dest}dist/"
-rsync -av --omit-dir-times src/php/ "${dest}src/php/"
+	rsync -av --omit-dir-times avpvh-find-and-view.php "$dest"
+	rsync -av --omit-dir-times dist/ "${dest}dist/"
+	rsync -av --omit-dir-times src/php/ "${dest}src/php/"
+done
 
 echo "Done -- ${new_version} deployed."
