@@ -115,6 +115,7 @@
 .fav-lb-btn:hover { background: rgba(255,255,255,.22); }
 .fav-lb-btn:disabled { opacity: .2; cursor: default; }
 .fav-lb-close { font-size: 1em; padding: .35em .55em; }
+.fav-lb-open-pdf { font-size: 1em; padding: .35em .55em; text-decoration: none; display: inline-flex; align-items: center; }
 .fav-lb-zbtn { border: 1px solid #ccc; background: #fff; color: #444; cursor: pointer; font-size: .95em; width: 1.7em; height: 1.7em; border-radius: 3px; line-height: 1; display: flex; align-items: center; justify-content: center; }
 .fav-lb-zbtn:hover { background: #eee; }
 .fav-lb-iz { position: absolute; bottom: .5em; right: .5em; display: flex; gap: .3em; }
