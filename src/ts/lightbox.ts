@@ -57,6 +57,7 @@ export class Lightbox {
         <p class="fav-lb-caption"></p>
         <div style="display:flex;gap:.5em;align-items:center">
           <span class="fav-lb-counter"></span>
+          <a class="fav-lb-btn fav-lb-open-pdf" href="#" target="_blank" rel="noopener noreferrer" title="PDF openen in nieuw tabblad" style="display:none">&#x1F5CE;&#xFE0F;</a>
           <button class="fav-lb-btn fav-lb-close" title="Sluiten (Esc)">&#x2715;</button>
         </div>
       </div>
@@ -157,6 +158,14 @@ export class Lightbox {
       loadingEl.style.display = 'none';
       imgEl.style.display = '';
       this.setImage(item.url);
+    }
+
+    const openPdfEl = el.querySelector('.fav-lb-open-pdf') as HTMLAnchorElement;
+    if (item.kind === 'pdf') {
+      openPdfEl.href = item.page != null ? `${item.url}#page=${item.page}` : item.url;
+      openPdfEl.style.display = '';
+    } else {
+      openPdfEl.style.display = 'none';
     }
 
     el.querySelector('.fav-lb-caption')!.textContent = item.caption;
