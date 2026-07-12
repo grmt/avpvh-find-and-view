@@ -93,7 +93,6 @@
 .fav-lb-caption { color: #ccc; font-size: .82em; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fav-lb-counter { color: #888; font-size: .78em; white-space: nowrap; }
 .fav-lb-match-counter { color: #ffd166; font-size: .78em; white-space: nowrap; }
-.fav-lb-prev-match, .fav-lb-next-match { font-size: .95em; padding: .3em .45em; }
 .ais-Pagination-list { list-style: none; margin: 0; padding: 0; display: flex; gap: .25em; flex-wrap: wrap; }
 .ais-Pagination-item a, .ais-Pagination-item span { display: inline-block; padding: .25em .55em; border: 1px solid #ccd0d4; border-radius: 3px; color: #0073aa; text-decoration: none; }
 .ais-Pagination-item--selected a, .ais-Pagination-item--selected span { background: #0073aa; color: #fff; border-color: #0073aa; }
@@ -119,7 +118,8 @@
 .fav-lb-btn:hover { background: rgba(255,255,255,.22); }
 .fav-lb-btn:disabled { opacity: .2; cursor: default; }
 .fav-lb-close { font-size: 1em; padding: .35em .55em; }
-.fav-lb-open-pdf { font-size: 1em; padding: .35em .55em; text-decoration: none; display: inline-flex; align-items: center; }
+.fav-lb-icon { font-size: 1em; padding: .4em; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.fav-lb-icon svg { display: block; }
 .fav-lb-zbtn { border: 1px solid #ccc; background: #fff; color: #444; cursor: pointer; font-size: .95em; width: 1.7em; height: 1.7em; border-radius: 3px; line-height: 1; display: flex; align-items: center; justify-content: center; }
 .fav-lb-zbtn:hover { background: #eee; }
 .fav-lb-iz { position: absolute; bottom: .5em; right: .5em; display: flex; gap: .3em; }
