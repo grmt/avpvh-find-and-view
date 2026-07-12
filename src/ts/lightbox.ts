@@ -23,6 +23,14 @@ export interface LightboxItem {
   text: string;
   kind?: 'image' | 'pdf';
   page?: number;
+  highlightTerms?: string[];
+}
+
+interface HighlightRect {
+  xFrac: number;
+  yFrac: number;
+  wFrac: number;
+  hFrac: number;
 }
 
 export class Lightbox {
@@ -35,6 +43,7 @@ export class Lightbox {
   private pdfDocs = new Map<string, pdfjsLib.PDFDocumentLoadingTask>();
   private currentBlobUrl: string | null = null;
   private showToken = 0;
+  private highlightRects: HighlightRect[] = [];
 
   private readonly keyHandler = (e: KeyboardEvent): void => {
     if (!this.el) return;
@@ -65,6 +74,7 @@ export class Lightbox {
         <div class="fav-lb-nav"><button class="fav-lb-btn fav-lb-prev">&#x2039;</button></div>
         <div class="fav-lb-img-wrap">
           <img class="fav-lb-img" alt="">
+          <div class="fav-lb-highlights"></div>
           <div class="fav-lb-loading" style="display:none">Laden…</div>
           <div class="fav-lb-iz">
             <button class="fav-lb-zbtn">&#x2212;</button>
@@ -98,6 +108,8 @@ export class Lightbox {
     tzBtns[0]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom / 1.2));
     tzBtns[1]?.addEventListener('click', () => this.setTxtZoom(1));
     tzBtns[2]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom * 1.2));
+
+    this.el.querySelector('.fav-lb-img')!.addEventListener('load', () => this.renderHighlights());
 
     this.el.querySelector('.fav-lb-img')!.addEventListener('contextmenu', (e: Event) => {
       const item = this.items[this.idx];
@@ -146,14 +158,18 @@ export class Lightbox {
     const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
     const loadingEl = el.querySelector('.fav-lb-loading') as HTMLElement;
 
+    this.highlightRects = [];
+    this.renderHighlights();
+
     if (item.kind === 'pdf' && item.page != null) {
       imgEl.style.display = 'none';
       loadingEl.style.display = '';
       loadingEl.textContent = 'Laden…';
-      this.renderPdfPage(item.url, item.page)
-        .then(blobUrl => {
+      this.renderPdfPage(item.url, item.page, item.highlightTerms ?? [])
+        .then(({ blobUrl, rects }) => {
           if (token !== this.showToken) return; // superseded by newer navigation
           if (!blobUrl) { loadingEl.textContent = 'Kon PDF-pagina niet laden.'; return; }
+          this.highlightRects = rects;
           this.setImage(blobUrl);
           imgEl.style.display = '';
           loadingEl.style.display = 'none';
@@ -193,7 +209,9 @@ export class Lightbox {
     imgEl.src = src;
   }
 
-  private async renderPdfPage(url: string, pageNum: number): Promise<string | null> {
+  private async renderPdfPage(
+    url: string, pageNum: number, terms: string[],
+  ): Promise<{ blobUrl: string | null; rects: HighlightRect[] }> {
     try {
       let task = this.pdfDocs.get(url);
       if (!task) {
@@ -208,18 +226,87 @@ export class Lightbox {
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d')!;
       await page.render({ canvasContext: ctx, viewport }).promise;
-      return await new Promise<string | null>(resolve => {
+
+      const rects = await this.findHighlightRects(page, viewport, terms);
+
+      const blobUrl = await new Promise<string | null>(resolve => {
         canvas.toBlob(blob => resolve(blob ? URL.createObjectURL(blob) : null), 'image/png');
       });
+      return { blobUrl, rects };
     } catch (err) {
       console.error('[avpvh-find-and-view] PDF page render failed:', err);
-      return null;
+      return { blobUrl: null, rects: [] };
+    }
+  }
+
+  // Highlights matched search terms directly on the rendered PDF page by
+  // matching them against the page's extracted text items (independent of
+  // the canvas render) and projecting each match's PDF-space transform
+  // through the same viewport used for rendering, as fractions of the page
+  // so positioning survives zoom/resize without re-running this lookup.
+  private async findHighlightRects(
+    page: pdfjsLib.PDFPageProxy, viewport: pdfjsLib.PageViewport, terms: string[],
+  ): Promise<HighlightRect[]> {
+    const lowerTerms = terms.map(t => t.toLowerCase()).filter(Boolean);
+    if (!lowerTerms.length) return [];
+
+    const rects: HighlightRect[] = [];
+    const textContent = await page.getTextContent();
+    for (const tItem of textContent.items) {
+      if (!('str' in tItem) || !tItem.str) continue;
+      const str = tItem.str.toLowerCase();
+      if (!lowerTerms.some(t => str.includes(t))) continue;
+
+      const tx = pdfjsLib.Util.transform(viewport.transform, tItem.transform);
+      const height = Math.hypot(tx[2], tx[3]);
+      const width = tItem.width * viewport.scale;
+      const x = tx[4];
+      const y = tx[5] - height;
+      rects.push({
+        xFrac: x / viewport.width,
+        yFrac: y / viewport.height,
+        wFrac: width / viewport.width,
+        hFrac: height / viewport.height,
+      });
+    }
+    return rects;
+  }
+
+  // Positions boxes using the image's untransformed layout box (offsetWidth/
+  // offsetTop), not getBoundingClientRect(), so this is unaffected by the
+  // zoom transform or its CSS transition — the highlights layer gets the
+  // same transform applied to it in setImgZoom() and scales in lockstep via
+  // CSS instead of needing to be recomputed on every zoom change.
+  private renderHighlights(): void {
+    const container = this.el?.querySelector('.fav-lb-highlights') as HTMLElement | null;
+    if (!container) return;
+    container.innerHTML = '';
+    if (!this.highlightRects.length) return;
+
+    const imgEl = this.el!.querySelector('.fav-lb-img') as HTMLImageElement;
+    if (imgEl.style.display === 'none') return;
+    const w = imgEl.offsetWidth;
+    const h = imgEl.offsetHeight;
+    if (!w || !h) return;
+    const offsetX = imgEl.offsetLeft;
+    const offsetY = imgEl.offsetTop;
+
+    for (const r of this.highlightRects) {
+      const box = document.createElement('div');
+      box.className = 'fav-lb-highlight-box';
+      box.style.left = `${offsetX + r.xFrac * w}px`;
+      box.style.top = `${offsetY + r.yFrac * h}px`;
+      box.style.width = `${r.wFrac * w}px`;
+      box.style.height = `${r.hFrac * h}px`;
+      container.appendChild(box);
     }
   }
 
   private setImgZoom(z: number): void {
     this.imgZoom = Math.max(0.2, Math.min(8, z));
-    (this.el!.querySelector('.fav-lb-img') as HTMLElement).style.transform = `scale(${this.imgZoom})`;
+    const scale = `scale(${this.imgZoom})`;
+    (this.el!.querySelector('.fav-lb-img') as HTMLElement).style.transform = scale;
+    (this.el!.querySelector('.fav-lb-highlights') as HTMLElement).style.transform = scale;
   }
 
   private setTxtZoom(z: number): void {

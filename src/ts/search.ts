@@ -678,8 +678,11 @@ function initInstance(cfg: FavConfig): void {
               .join('');
             const caption = (h.collection ?? '') + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
             const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
+            const highlightTerms = Array.from(
+              new Set(Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean)),
+            );
             return isPdf
-              ? { url: h.url, caption, text: html, kind: 'pdf' as const, page: h.page_number ?? undefined }
+              ? { url: h.url, caption, text: html, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms }
               : { url: h.url, caption, text: html };
           });
 
