@@ -462,12 +462,16 @@ function initInstance(cfg: FavConfig): void {
 
   // Section collapse
   root.querySelectorAll<HTMLElement>('.fav-section-header').forEach(hdr => {
+    const target = hdr.dataset['target'];
+    const body = target ? document.getElementById(target) : null;
     hdr.addEventListener('click', () => {
-      const target = hdr.dataset['target'];
-      const body = target ? document.getElementById(target) : null;
       const collapsed = hdr.classList.toggle('collapsed');
       if (body) body.style.display = collapsed ? 'none' : '';
     });
+    if (hdr.dataset['collapseMobile'] !== undefined && window.matchMedia('(max-width: 760px)').matches) {
+      hdr.classList.add('collapsed');
+      if (body) body.style.display = 'none';
+    }
   });
 
   // Source toggles
