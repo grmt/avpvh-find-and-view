@@ -99,6 +99,14 @@ export class Lightbox {
     tzBtns[1]?.addEventListener('click', () => this.setTxtZoom(1));
     tzBtns[2]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom * 1.2));
 
+    this.el.querySelector('.fav-lb-img')!.addEventListener('contextmenu', (e: Event) => {
+      const item = this.items[this.idx];
+      if (item?.kind !== 'pdf') return;
+      e.preventDefault();
+      const href = item.page != null ? `${item.url}#page=${item.page}` : item.url;
+      window.open(href, '_blank', 'noopener,noreferrer');
+    });
+
     this.el.querySelector('.fav-lb-img-wrap')!.addEventListener('wheel', (e: Event) => {
       const we = e as WheelEvent;
       if (!we.ctrlKey) return;
