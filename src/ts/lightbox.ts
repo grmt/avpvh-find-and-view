@@ -49,8 +49,28 @@ export class Lightbox {
 
   private readonly keyHandler = (e: KeyboardEvent): void => {
     if (!this.el) return;
+    const arrowKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+    if (arrowKeys.includes(e.key) && this.imgZoom > 1.01) {
+      // Zoomed in: arrows pan the image instead of navigating, since
+      // that's what you actually want once you can no longer see the
+      // whole page — otherwise there'd be no keyboard way to pan at all.
+      e.preventDefault();
+      const wrap = this.el.querySelector('.fav-lb-img-wrap') as HTMLElement;
+      const step = 80;
+      wrap.scrollBy({
+        left: e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0,
+        top: e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0,
+        behavior: 'smooth',
+      });
+      return;
+    }
     if (e.key === 'ArrowLeft') this.show(this.idx - 1);
     if (e.key === 'ArrowRight') this.show(this.idx + 1);
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault(); // otherwise scrolls the text panel instead
+      const i = this.findMatchIdx(e.key === 'ArrowUp' ? -1 : 1);
+      if (i >= 0) this.show(i);
+    }
     if (e.key === 'Escape') this.close();
   };
 
@@ -70,11 +90,11 @@ export class Lightbox {
         <div style="display:flex;gap:.5em;align-items:center;flex-wrap:wrap;justify-content:flex-end">
           <div class="fav-lb-match-nav" style="display:none;align-items:center;gap:.3em">
             <svg class="fav-lb-search-icon" viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-            <button class="fav-lb-btn fav-lb-icon fav-lb-prev-match" title="Vorige zoekresultaat">
+            <button class="fav-lb-btn fav-lb-icon fav-lb-prev-match" title="Vorige zoekresultaat (&#x2191;)">
               <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
             </button>
             <span class="fav-lb-match-counter"></span>
-            <button class="fav-lb-btn fav-lb-icon fav-lb-next-match" title="Volgende zoekresultaat">
+            <button class="fav-lb-btn fav-lb-icon fav-lb-next-match" title="Volgende zoekresultaat (&#x2193;)">
               <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
             </button>
           </div>
