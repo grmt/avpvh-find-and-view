@@ -55,12 +55,13 @@ Hint: It might not be working because maybe you're not up to date with the Meili
         <p class="fav-lb-caption"></p>
         <div style="display:flex;gap:.5em;align-items:center">
           <div class="fav-lb-match-nav" style="display:none;align-items:center;gap:.3em">
+            <svg class="fav-lb-search-icon" viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
             <button class="fav-lb-btn fav-lb-icon fav-lb-prev-match" title="Vorige zoekresultaat">
-              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
             </button>
             <span class="fav-lb-match-counter"></span>
             <button class="fav-lb-btn fav-lb-icon fav-lb-next-match" title="Volgende zoekresultaat">
-              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
             </button>
           </div>
           <span class="fav-lb-counter"></span>
