@@ -65,6 +65,11 @@ final class FindAndViewShortcode {
 				<div class="fav-filters">
 
 					<?php if ( $show_media || $show_content ): ?>
+					<h3 class="fav-section-header fav-filter-toggle"
+						data-target="<?php echo esc_attr( $uid ); ?>-filter-panel" data-collapse-mobile="1">
+						<span class="fav-collapse-icon">▾</span>
+						<?php esc_html_e( 'Filters', 'avpvh-find-and-view' ); ?>
+					</h3>
 					<div class="fav-filter-panel" id="<?php echo esc_attr( $uid ); ?>-filter-panel">
 						<div class="fav-refine-wrap">
 							<input type="search" class="fav-refine-input"

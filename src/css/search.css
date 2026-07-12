@@ -1,8 +1,15 @@
+.fav-wrap, .fav-wrap * { box-sizing: border-box; }
 .fav-wrap { max-width: 1100px; margin: 0 auto; }
 .fav-searchbar { display: flex; align-items: center; gap: 1em; flex-wrap: wrap; }
 .fav-layout { display: flex; gap: 1.5em; align-items: flex-start; margin-top: 1em; }
 .fav-filters { width: 180px; flex-shrink: 0; display: flex; flex-direction: column; gap: .8em; }
 .fav-filter-panel { border: 1px solid #e0e0e0; border-radius: 6px; padding: .8em 1em; background: #fafafa; }
+.fav-filter-toggle { cursor: pointer; }
+
+@media (max-width: 760px) {
+  .fav-layout { flex-direction: column; }
+  .fav-filters { width: 100%; }
+}
 .fav-source-toggle { display: block; font-size: .9em; margin: .3em 0; cursor: pointer; white-space: nowrap; }
 .fav-source-toggle input { margin-right: .4em; }
 .fav-results { flex: 1; min-width: 0; }
