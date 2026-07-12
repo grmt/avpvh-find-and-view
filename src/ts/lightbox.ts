@@ -24,6 +24,7 @@ export interface LightboxItem {
   kind?: 'image' | 'pdf';
   page?: number;
   highlightTerms?: string[];
+  isMatch?: boolean;
 }
 
 interface HighlightRect {
@@ -65,6 +66,11 @@ export class Lightbox {
       <div class="fav-lb-toolbar">
         <p class="fav-lb-caption"></p>
         <div style="display:flex;gap:.5em;align-items:center">
+          <div class="fav-lb-match-nav" style="display:none;align-items:center;gap:.3em">
+            <button class="fav-lb-btn fav-lb-prev-match" title="Vorige zoekresultaat">&#x1F50D;&#x2039;</button>
+            <span class="fav-lb-match-counter"></span>
+            <button class="fav-lb-btn fav-lb-next-match" title="Volgende zoekresultaat">&#x1F50D;&#x203A;</button>
+          </div>
           <span class="fav-lb-counter"></span>
           <a class="fav-lb-btn fav-lb-open-pdf" href="#" target="_blank" rel="noopener noreferrer" title="PDF openen in nieuw tabblad" style="display:none">&#x1F5CE;&#xFE0F;</a>
           <button class="fav-lb-btn fav-lb-close" title="Sluiten (Esc)">&#x2715;</button>
@@ -98,6 +104,15 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-close')!.addEventListener('click', () => this.close());
     this.el.querySelector('.fav-lb-prev')!.addEventListener('click', () => this.show(this.idx - 1));
     this.el.querySelector('.fav-lb-next')!.addEventListener('click', () => this.show(this.idx + 1));
+
+    this.el.querySelector('.fav-lb-prev-match')!.addEventListener('click', () => {
+      const i = this.findMatchIdx(-1);
+      if (i >= 0) this.show(i);
+    });
+    this.el.querySelector('.fav-lb-next-match')!.addEventListener('click', () => {
+      const i = this.findMatchIdx(1);
+      if (i >= 0) this.show(i);
+    });
 
     const izBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-iz .fav-lb-zbtn'));
     izBtns[0]?.addEventListener('click', () => this.setImgZoom(this.imgZoom / 1.3));
@@ -135,6 +150,19 @@ export class Lightbox {
 
     document.addEventListener('keydown', this.keyHandler);
     this.show(startIdx);
+  }
+
+  // Finds the next/previous item flagged as an actual search match, skipping
+  // over the (also browsable via prev/next) pages that don't match — lets
+  // "next search result" jump ahead through a whole PDF instead of stepping
+  // through every single non-matching page in between.
+  private findMatchIdx(direction: 1 | -1): number {
+    let i = this.idx + direction;
+    while (i >= 0 && i < this.items.length) {
+      if (this.items[i]?.isMatch) return i;
+      i += direction;
+    }
+    return -1;
   }
 
   close(): void {
@@ -196,6 +224,17 @@ export class Lightbox {
     el.querySelector('.fav-lb-counter')!.textContent = `${this.idx + 1} / ${this.items.length}`;
     (el.querySelector('.fav-lb-prev') as HTMLButtonElement).disabled = this.idx === 0;
     (el.querySelector('.fav-lb-next') as HTMLButtonElement).disabled = this.idx === this.items.length - 1;
+
+    const matchCount = this.items.filter(it => it.isMatch).length;
+    const matchNavEl = el.querySelector('.fav-lb-match-nav') as HTMLElement;
+    matchNavEl.style.display = matchCount > 0 ? 'flex' : 'none';
+    if (matchCount > 0) {
+      const matchPos = this.items.slice(0, this.idx + 1).filter(it => it.isMatch).length;
+      el.querySelector('.fav-lb-match-counter')!.textContent =
+        item.isMatch ? `resultaat ${matchPos}/${matchCount}` : `${matchCount} resultaten`;
+      (el.querySelector('.fav-lb-prev-match') as HTMLButtonElement).disabled = this.findMatchIdx(-1) < 0;
+      (el.querySelector('.fav-lb-next-match') as HTMLButtonElement).disabled = this.findMatchIdx(1) < 0;
+    }
 
     const content = el.querySelector('.fav-lb-text-content')!;
     content.innerHTML = item.text || '<span class="fav-lb-text-empty">Geen tekst beschikbaar.</span>';

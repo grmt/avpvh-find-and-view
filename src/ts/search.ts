@@ -651,42 +651,49 @@ function initInstance(cfg: FavConfig): void {
       const sbEl = root.querySelector<HTMLInputElement>('.ais-SearchBox-input');
       const q = sbEl?.value.trim() ?? '';
 
-      fetch(`${cfg.meiliUrl}/indexes/${cfg.mediaIndex}/search`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          q,
-          filter: `collection = "${collection}"`,
-          limit: 5000,
-          attributesToRetrieve: ['id', 'url', 'title', 'page_number', 'text', 'collection'],
-          attributesToHighlight: ['text'],
-          highlightPreTag: '<em>',
-          highlightPostTag: '</em>',
-        }),
-      })
-        .then(r => r.json())
-        .then((data: { hits?: MeiliHit[] }) => {
-          const fetchedHits = (data.hits ?? []).filter(h => h.url);
-          fetchedHits.sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
-          if (!fetchedHits.length) { lb.close(); return; }
+      const fetchHits = (query: string, highlight: boolean): Promise<{ hits?: MeiliHit[] }> =>
+        fetch(`${cfg.meiliUrl}/indexes/${cfg.mediaIndex}/search`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            q: query,
+            filter: `collection = "${collection}"`,
+            limit: 5000,
+            attributesToRetrieve: ['id', 'url', 'title', 'page_number', 'text', 'collection'],
+            ...(highlight ? { attributesToHighlight: ['text'], highlightPreTag: '<em>', highlightPostTag: '</em>' } : {}),
+          }),
+        }).then(r => r.json());
 
-          const items: LightboxItem[] = fetchedHits.map(h => {
-            const highlighted = h._formatted?.text ?? h.text;
+      // Fetch every page of the document (so the lightbox can browse page by
+      // page, not just through matches) plus a separate query for the actual
+      // search matches (for highlighting + "next search result" jumps).
+      Promise.all([fetchHits('', false), q ? fetchHits(q, true) : Promise.resolve({ hits: [] })])
+        .then(([allData, matchData]) => {
+          const allHits = (allData.hits ?? []).filter(h => h.url);
+          allHits.sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+          if (!allHits.length) { lb.close(); return; }
+
+          const matchMap = new Map((matchData.hits ?? []).map(h => [h.id, h]));
+
+          const items: LightboxItem[] = allHits.map(h => {
+            const matchHit = matchMap.get(h.id);
+            const isMatch = matchHit != null;
+            const highlighted = matchHit?._formatted?.text ?? h.text;
             const html = highlighted
               .split(/\n\n+/)
               .map(p => `<p style="margin:0 0 .8em">${p.replace(/\n/g, '<br>')}</p>`)
               .join('');
             const caption = (h.collection ?? '') + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
             const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
-            const highlightTerms = Array.from(
-              new Set(Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean)),
-            );
+            const highlightTerms = isMatch
+              ? Array.from(new Set(Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean)))
+              : [];
             return isPdf
-              ? { url: h.url, caption, text: html, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms }
-              : { url: h.url, caption, text: html };
+              ? { url: h.url, caption, text: html, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch }
+              : { url: h.url, caption, text: html, isMatch };
           });
 
-          const startIdx = fetchedHits.findIndex(h => h.id === hitId);
+          const startIdx = allHits.findIndex(h => h.id === hitId);
           const focusSb = (): void => { root.querySelector<HTMLInputElement>('.ais-SearchBox-input')?.focus(); };
           lb.open(items, startIdx < 0 ? 0 : startIdx, focusSb);
         })
