@@ -45,6 +45,7 @@ export class Lightbox {
   private currentBlobUrl: string | null = null;
   private showToken = 0;
   private highlightRects: HighlightRect[] = [];
+  private hiddenPanel: 'img' | 'text' | null = null;
 
   private readonly keyHandler = (e: KeyboardEvent): void => {
     if (!this.el) return;
@@ -58,6 +59,7 @@ export class Lightbox {
     this.items = items;
     this.imgZoom = 1;
     this.txtZoom = 1;
+    this.hiddenPanel = null;
     this.onClose = onClose ?? null;
 
     this.el = document.createElement('div');
@@ -65,7 +67,7 @@ export class Lightbox {
     this.el.innerHTML = `
       <div class="fav-lb-toolbar">
         <p class="fav-lb-caption"></p>
-        <div style="display:flex;gap:.5em;align-items:center">
+        <div style="display:flex;gap:.5em;align-items:center;flex-wrap:wrap;justify-content:flex-end">
           <div class="fav-lb-match-nav" style="display:none;align-items:center;gap:.3em">
             <svg class="fav-lb-search-icon" viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
             <button class="fav-lb-btn fav-lb-icon fav-lb-prev-match" title="Vorige zoekresultaat">
@@ -76,7 +78,21 @@ export class Lightbox {
               <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
             </button>
           </div>
-          <span class="fav-lb-counter"></span>
+          <div class="fav-lb-page-nav" style="display:flex;align-items:center;gap:.3em">
+            <button class="fav-lb-btn fav-lb-icon fav-lb-prev" title="Vorige pagina (&#x2190;)">
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <span class="fav-lb-counter"></span>
+            <button class="fav-lb-btn fav-lb-icon fav-lb-next" title="Volgende pagina (&#x2192;)">
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+            </button>
+          </div>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-toggle-img" title="Pagina tonen/verbergen">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+          </button>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-toggle-text" title="Tekst tonen/verbergen">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+          </button>
           <a class="fav-lb-btn fav-lb-icon fav-lb-open-pdf" href="#" target="_blank" rel="noopener noreferrer" title="PDF openen in nieuw tabblad" style="display:none">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
           </a>
@@ -84,10 +100,11 @@ export class Lightbox {
         </div>
       </div>
       <div class="fav-lb-body">
-        <div class="fav-lb-nav"><button class="fav-lb-btn fav-lb-prev">&#x2039;</button></div>
-        <div class="fav-lb-img-wrap">
-          <img class="fav-lb-img" alt="">
-          <div class="fav-lb-highlights"></div>
+        <div class="fav-lb-img-outer">
+          <div class="fav-lb-img-wrap">
+            <img class="fav-lb-img" alt="">
+            <div class="fav-lb-highlights"></div>
+          </div>
           <div class="fav-lb-loading" style="display:none">Laden…</div>
           <div class="fav-lb-iz">
             <button class="fav-lb-zbtn">&#x2212;</button>
@@ -103,7 +120,6 @@ export class Lightbox {
           </div>
           <div class="fav-lb-text-content"></div>
         </div>
-        <div class="fav-lb-nav"><button class="fav-lb-btn fav-lb-next">&#x203A;</button></div>
       </div>`;
 
     document.body.appendChild(this.el);
@@ -120,6 +136,9 @@ export class Lightbox {
       const i = this.findMatchIdx(1);
       if (i >= 0) this.show(i);
     });
+
+    this.el.querySelector('.fav-lb-toggle-img')!.addEventListener('click', () => this.togglePanel('img'));
+    this.el.querySelector('.fav-lb-toggle-text')!.addEventListener('click', () => this.togglePanel('text'));
 
     const izBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-iz .fav-lb-zbtn'));
     izBtns[0]?.addEventListener('click', () => this.setImgZoom(this.imgZoom / 1.3));
@@ -155,8 +174,45 @@ export class Lightbox {
       this.setTxtZoom(this.txtZoom * (we.deltaY < 0 ? 1.1 : 0.9));
     }, { passive: false });
 
+    // Swipe left/right to page through items on touch devices. Only when
+    // not zoomed in — while zoomed, a horizontal drag is panning (native
+    // scroll on the now-scrollable .fav-lb-img-wrap), not paging.
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchActive = false;
+    const imgWrapEl = this.el.querySelector('.fav-lb-img-wrap')!;
+    imgWrapEl.addEventListener('touchstart', (e: Event) => {
+      const te = e as TouchEvent;
+      touchActive = te.touches.length === 1;
+      if (!touchActive) return;
+      touchStartX = te.touches[0]!.clientX;
+      touchStartY = te.touches[0]!.clientY;
+    }, { passive: true });
+    imgWrapEl.addEventListener('touchend', (e: Event) => {
+      if (!touchActive || this.imgZoom > 1.01) return;
+      touchActive = false;
+      const touch = (e as TouchEvent).changedTouches[0];
+      if (!touch) return;
+      const dx = touch.clientX - touchStartX;
+      const dy = touch.clientY - touchStartY;
+      if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      this.show(this.idx + (dx < 0 ? 1 : -1));
+    }, { passive: true });
+
     document.addEventListener('keydown', this.keyHandler);
     this.show(startIdx);
+  }
+
+  // Only one panel can be hidden at a time — hiding both would leave nothing
+  // to look at, so hiding one implicitly restores the other.
+  private togglePanel(which: 'img' | 'text'): void {
+    this.hiddenPanel = this.hiddenPanel === which ? null : which;
+    const el = this.el!;
+    (el.querySelector('.fav-lb-img-outer') as HTMLElement).style.display = this.hiddenPanel === 'img' ? 'none' : '';
+    (el.querySelector('.fav-lb-text-wrap') as HTMLElement).style.display = this.hiddenPanel === 'text' ? 'none' : '';
+    el.querySelector('.fav-lb-toggle-img')!.classList.toggle('fav-lb-active', this.hiddenPanel === 'img');
+    el.querySelector('.fav-lb-toggle-text')!.classList.toggle('fav-lb-active', this.hiddenPanel === 'text');
+    this.renderHighlights();
   }
 
   // Finds the next/previous item flagged as an actual search match, skipping
