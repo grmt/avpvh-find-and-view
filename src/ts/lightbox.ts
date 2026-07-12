@@ -67,12 +67,18 @@ export class Lightbox {
         <p class="fav-lb-caption"></p>
         <div style="display:flex;gap:.5em;align-items:center">
           <div class="fav-lb-match-nav" style="display:none;align-items:center;gap:.3em">
-            <button class="fav-lb-btn fav-lb-prev-match" title="Vorige zoekresultaat">&#x1F50D;&#x2039;</button>
+            <button class="fav-lb-btn fav-lb-icon fav-lb-prev-match" title="Vorige zoekresultaat">
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            </button>
             <span class="fav-lb-match-counter"></span>
-            <button class="fav-lb-btn fav-lb-next-match" title="Volgende zoekresultaat">&#x1F50D;&#x203A;</button>
+            <button class="fav-lb-btn fav-lb-icon fav-lb-next-match" title="Volgende zoekresultaat">
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
           </div>
           <span class="fav-lb-counter"></span>
-          <a class="fav-lb-btn fav-lb-open-pdf" href="#" target="_blank" rel="noopener noreferrer" title="PDF openen in nieuw tabblad" style="display:none">&#x1F5CE;&#xFE0F;</a>
+          <a class="fav-lb-btn fav-lb-icon fav-lb-open-pdf" href="#" target="_blank" rel="noopener noreferrer" title="PDF openen in nieuw tabblad" style="display:none">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+          </a>
           <button class="fav-lb-btn fav-lb-close" title="Sluiten (Esc)">&#x2715;</button>
         </div>
       </div>
