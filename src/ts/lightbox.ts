@@ -47,6 +47,19 @@ export class Lightbox {
   private highlightRects: HighlightRect[] = [];
   private hiddenPanel: 'img' | 'text' | null = null;
 
+  private static readonly FULLSCREEN_ENTER_SVG =
+    '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
+  private static readonly FULLSCREEN_EXIT_SVG =
+    '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>';
+
+  private readonly fullscreenHandler = (): void => {
+    const btn = this.el?.querySelector('.fav-lb-fullscreen');
+    if (!btn) return;
+    btn.innerHTML = document.fullscreenElement === this.el
+      ? Lightbox.FULLSCREEN_EXIT_SVG
+      : Lightbox.FULLSCREEN_ENTER_SVG;
+  };
+
   private readonly keyHandler = (e: KeyboardEvent): void => {
     if (!this.el) return;
     const arrowKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
@@ -113,6 +126,9 @@ export class Lightbox {
           <button class="fav-lb-btn fav-lb-icon fav-lb-toggle-text" title="Tekst tonen/verbergen">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
           </button>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-fullscreen" title="Volledig scherm">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+          </button>
           <a class="fav-lb-btn fav-lb-icon fav-lb-open-pdf" href="#" target="_blank" rel="noopener noreferrer" title="PDF openen in nieuw tabblad" style="display:none">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
           </a>
@@ -159,6 +175,12 @@ export class Lightbox {
 
     this.el.querySelector('.fav-lb-toggle-img')!.addEventListener('click', () => this.togglePanel('img'));
     this.el.querySelector('.fav-lb-toggle-text')!.addEventListener('click', () => this.togglePanel('text'));
+
+    this.el.querySelector('.fav-lb-fullscreen')!.addEventListener('click', () => {
+      if (document.fullscreenElement) void document.exitFullscreen();
+      else void this.el!.requestFullscreen();
+    });
+    document.addEventListener('fullscreenchange', this.fullscreenHandler);
 
     const izBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-iz .fav-lb-zbtn'));
     izBtns[0]?.addEventListener('click', () => this.setImgZoom(this.imgZoom / 1.3));
@@ -282,9 +304,11 @@ export class Lightbox {
 
   close(): void {
     if (!this.el) return;
+    if (document.fullscreenElement === this.el) void document.exitFullscreen();
     document.body.removeChild(this.el);
     this.el = null;
     document.removeEventListener('keydown', this.keyHandler);
+    document.removeEventListener('fullscreenchange', this.fullscreenHandler);
     if (this.currentBlobUrl) URL.revokeObjectURL(this.currentBlobUrl);
     this.currentBlobUrl = null;
     this.pdfDocs.forEach(task => { void task.destroy().catch(() => undefined); });
@@ -346,7 +370,7 @@ export class Lightbox {
     if (matchCount > 0) {
       const matchPos = this.items.slice(0, this.idx + 1).filter(it => it.isMatch).length;
       el.querySelector('.fav-lb-match-counter')!.textContent =
-        item.isMatch ? `resultaat ${matchPos}/${matchCount}` : `${matchCount} resultaten`;
+        item.isMatch ? `${matchPos}/${matchCount}` : `${matchCount}`;
       (el.querySelector('.fav-lb-prev-match') as HTMLButtonElement).disabled = this.findMatchIdx(-1) < 0;
       (el.querySelector('.fav-lb-next-match') as HTMLButtonElement).disabled = this.findMatchIdx(1) < 0;
     }
