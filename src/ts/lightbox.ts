@@ -194,30 +194,62 @@ export class Lightbox {
       this.setTxtZoom(this.txtZoom * (we.deltaY < 0 ? 1.1 : 0.9));
     }, { passive: false });
 
-    // Swipe left/right to page through items on touch devices. Only when
-    // not zoomed in — while zoomed, a horizontal drag is panning (native
-    // scroll on the now-scrollable .fav-lb-img-wrap), not paging.
+    // Touch gestures on the image, mirroring the keyboard scheme: swipe
+    // left/right pages, swipe up/down jumps to the next/previous search
+    // result, and a two-finger pinch zooms — all only while not already
+    // zoomed in, where a single-finger drag instead pans (native scroll on
+    // the now-scrollable .fav-lb-img-wrap).
     let touchStartX = 0;
     let touchStartY = 0;
-    let touchActive = false;
+    let touchMode: 'none' | 'swipe' | 'pinch' = 'none';
+    let pinchStartDist = 0;
+    let pinchStartZoom = 1;
+    const touchDist = (a: Touch, b: Touch): number => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
     const imgWrapEl = this.el.querySelector('.fav-lb-img-wrap')!;
+
     imgWrapEl.addEventListener('touchstart', (e: Event) => {
       const te = e as TouchEvent;
-      touchActive = te.touches.length === 1;
-      if (!touchActive) return;
-      touchStartX = te.touches[0]!.clientX;
-      touchStartY = te.touches[0]!.clientY;
+      if (te.touches.length === 2) {
+        touchMode = 'pinch';
+        pinchStartDist = touchDist(te.touches[0]!, te.touches[1]!);
+        pinchStartZoom = this.imgZoom;
+      } else if (te.touches.length === 1) {
+        touchMode = 'swipe';
+        touchStartX = te.touches[0]!.clientX;
+        touchStartY = te.touches[0]!.clientY;
+      } else {
+        touchMode = 'none';
+      }
     }, { passive: true });
-    imgWrapEl.addEventListener('touchend', (e: Event) => {
-      if (!touchActive || this.imgZoom > 1.01) return;
-      touchActive = false;
+
+    imgWrapEl.addEventListener('touchmove', (e: Event) => {
+      const te = e as TouchEvent;
+      if (touchMode !== 'pinch' || te.touches.length !== 2 || pinchStartDist <= 0) return;
+      e.preventDefault(); // suppress the browser's own page-pinch-zoom
+      const ratio = touchDist(te.touches[0]!, te.touches[1]!) / pinchStartDist;
+      this.setImgZoom(pinchStartZoom * ratio);
+    }, { passive: false });
+
+    const touchEnd = (e: Event): void => {
+      if (touchMode === 'pinch') {
+        if ((e as TouchEvent).touches.length < 2) touchMode = 'none';
+        return;
+      }
+      if (touchMode !== 'swipe' || this.imgZoom > 1.01) { touchMode = 'none'; return; }
+      touchMode = 'none';
       const touch = (e as TouchEvent).changedTouches[0];
       if (!touch) return;
       const dx = touch.clientX - touchStartX;
       const dy = touch.clientY - touchStartY;
-      if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-      this.show(this.idx + (dx < 0 ? 1 : -1));
-    }, { passive: true });
+      if (Math.abs(dx) > Math.abs(dy) * 1.5 && Math.abs(dx) > 50) {
+        this.show(this.idx + (dx < 0 ? 1 : -1));
+      } else if (Math.abs(dy) > Math.abs(dx) * 1.5 && Math.abs(dy) > 50) {
+        const i = this.findMatchIdx(dy < 0 ? -1 : 1);
+        if (i >= 0) this.show(i);
+      }
+    };
+    imgWrapEl.addEventListener('touchend', touchEnd, { passive: true });
+    imgWrapEl.addEventListener('touchcancel', () => { touchMode = 'none'; }, { passive: true });
 
     document.addEventListener('keydown', this.keyHandler);
     this.show(startIdx);
