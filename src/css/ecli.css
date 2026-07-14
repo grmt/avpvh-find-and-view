@@ -1,0 +1,14 @@
+.fav-ecli-wrap { max-width: 900px; margin: 0 auto; box-sizing: border-box; }
+.fav-ecli-wrap * { box-sizing: border-box; }
+.fav-ecli-search-input { width: 100%; padding: .6em .8em; font-size: 1em; border: 1px solid #ccc; border-radius: 4px; }
+.fav-ecli-hint { color: #888; font-size: .85em; margin: .5em 0 0; }
+.fav-ecli-empty { color: #888; font-style: italic; }
+.fav-ecli-results { display: flex; flex-direction: column; gap: .8em; margin-top: 1em; }
+.fav-ecli-card { border: 1px solid #e0e0e0; border-radius: 6px; padding: .8em 1em; background: #fff; }
+.fav-ecli-card-header { display: flex; align-items: center; justify-content: space-between; gap: 1em; flex-wrap: wrap; }
+.fav-ecli-id { font-family: monospace; font-size: .95em; color: #0066cc; text-decoration: none; font-weight: 600; }
+.fav-ecli-id:hover { text-decoration: underline; }
+.fav-ecli-count { font-size: .8em; color: #888; white-space: nowrap; }
+.fav-ecli-refs { list-style: none; margin: .6em 0 0; padding: 0; display: flex; flex-direction: column; gap: .3em; }
+.fav-ecli-refs a { font-size: .88em; color: #333; text-decoration: none; }
+.fav-ecli-refs a:hover { text-decoration: underline; color: #0066cc; }

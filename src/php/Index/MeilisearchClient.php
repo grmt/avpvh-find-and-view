@@ -14,6 +14,32 @@ final class MeilisearchClient {
 		$this->client->index( $index )->addDocuments( $docs );
 	}
 
+	/** For indices with a document shape that doesn't fit IndexItem (e.g. derived/aggregate indices). */
+	public function upsert_raw( string $index, array ...$docs ): void {
+		$this->client->index( $index )->addDocuments( $docs );
+	}
+
+	/**
+	 * Fetches every document in an index via offset pagination, using the
+	 * /documents listing endpoint (not /search, which is relevance-ranked
+	 * and capped) — for bulk export/scanning of a whole index.
+	 *
+	 * @param list<string> $fields
+	 * @return iterable<array<string, mixed>>
+	 */
+	public function fetch_all_documents( string $index, array $fields, int $page_size = 1000 ): iterable {
+		$offset = 0;
+		do {
+			$query = ( new \Meilisearch\Contracts\DocumentsQuery() )
+				->setOffset( $offset )
+				->setLimit( $page_size )
+				->setFields( $fields );
+			$results = $this->client->index( $index )->getDocuments( $query )->getResults();
+			foreach ( $results as $doc ) yield $doc;
+			$offset += $page_size;
+		} while ( count( $results ) === $page_size );
+	}
+
 	public function delete( string $index, string ...$ids ): void {
 		$this->client->index( $index )->deleteDocuments( $ids );
 	}

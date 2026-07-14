@@ -24,6 +24,10 @@ final class Settings {
 		return self::get()['index_prefix'] . '_media';
 	}
 
+	public static function ecli_index(): string {
+		return self::get()['index_prefix'] . '_ecli';
+	}
+
 	public static function admin_key(): string {
 		$key_file = '/run/secrets/meilisearch_master_key';
 		if ( is_readable( $key_file ) ) {
