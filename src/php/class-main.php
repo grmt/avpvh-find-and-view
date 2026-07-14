@@ -4,9 +4,11 @@ namespace Avpvh\FindAndView;
 
 use Avpvh\FindAndView\Admin\SettingsPage;
 use Avpvh\FindAndView\Admin\TreeController;
+use Avpvh\FindAndView\CLI\EcliIndexCommand;
 use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Observer\PostObserver;
 use Avpvh\FindAndView\Queue\SyncQueue;
+use Avpvh\FindAndView\Shortcode\EcliShortcode;
 use Avpvh\FindAndView\Shortcode\FindAndViewShortcode;
 
 final class Main {
@@ -29,9 +31,11 @@ final class Main {
 
 		( new PostObserver( $post_types ) )->register();
 		( new FindAndViewShortcode() )->register();
+		( new EcliShortcode() )->register();
 		( new SettingsPage() )->register();
 		( new TreeController() )->register();
 
 		IndexCommand::register();
+		EcliIndexCommand::register();
 	}
 }
