@@ -24,7 +24,7 @@ final class EcliIndexer {
 
 		$docs = $this->client->fetch_all_documents(
 			$this->media_index,
-			[ 'text', 'collection', 'title', 'url', 'page_number' ],
+			[ 'text', 'collection', 'title', 'url', 'source_url', 'page_number' ],
 		);
 
 		foreach ( $docs as $doc ) {
@@ -44,6 +44,7 @@ final class EcliIndexer {
 					'collection'  => $doc['collection'] ?? '',
 					'title'       => $doc['title'] ?? '',
 					'url'         => $doc['url'] ?? '',
+					'source_url'  => $doc['source_url'] ?? null,
 					'page_number' => $doc['page_number'] ?? null,
 				];
 			}

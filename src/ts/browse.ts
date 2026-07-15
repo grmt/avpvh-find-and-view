@@ -1,7 +1,5 @@
 import type { FavConfig, MeiliHit } from './types';
-import type { Lightbox } from './lightbox';
-
-interface LightboxItem { url: string; caption: string; text: string }
+import type { Lightbox, LightboxItem } from './lightbox';
 
 const PAGE_SIZE = 60;
 
@@ -309,7 +307,7 @@ export class BrowseMode {
           q: '',
           filter: `collection = "${collection}"`,
           limit: 5000,
-          attributesToRetrieve: ['id', 'url', 'title', 'page_number', 'text', 'collection'],
+          attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection'],
         }),
       }).then(r => r.json()) as { hits: MeiliHit[] };
 
@@ -325,7 +323,7 @@ export class BrowseMode {
           : '';
         const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
         return isPdf
-          ? { url: h.url, caption, text, kind: 'pdf' as const, page: h.page_number ?? undefined }
+          ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text, kind: 'pdf' as const, page: h.page_number ?? undefined }
           : { url: h.url, caption, text };
       });
 
