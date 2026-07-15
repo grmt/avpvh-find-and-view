@@ -19,6 +19,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
 export interface LightboxItem {
   url: string;
+  sourceUrl?: string;
   caption: string;
   text: string;
   kind?: 'image' | 'pdf';
@@ -46,6 +47,15 @@ export class Lightbox {
   private showToken = 0;
   private highlightRects: HighlightRect[] = [];
   private hiddenPanel: 'img' | 'text' | null = null;
+
+  // Prefer the original publisher/repository URL over our own hosted copy for
+  // "open externally" actions (navigation, not the in-page PDF.js render,
+  // which must keep using item.url — CORS and matching page numbers only
+  // work reliably against our own copy).
+  private static openPdfHref(item: LightboxItem): string {
+    if (item.sourceUrl) return item.sourceUrl;
+    return item.page != null ? `${item.url}#page=${item.page}` : item.url;
+  }
 
   private static readonly FULLSCREEN_ENTER_SVG =
     '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
@@ -198,8 +208,7 @@ export class Lightbox {
       const item = this.items[this.idx];
       if (item?.kind !== 'pdf') return;
       e.preventDefault();
-      const href = item.page != null ? `${item.url}#page=${item.page}` : item.url;
-      window.open(href, '_blank', 'noopener,noreferrer');
+      window.open(Lightbox.openPdfHref(item), '_blank', 'noopener,noreferrer');
     });
 
     this.el.querySelector('.fav-lb-img-wrap')!.addEventListener('wheel', (e: Event) => {
@@ -353,7 +362,7 @@ export class Lightbox {
 
     const openPdfEl = el.querySelector('.fav-lb-open-pdf') as HTMLAnchorElement;
     if (item.kind === 'pdf') {
-      openPdfEl.href = item.page != null ? `${item.url}#page=${item.page}` : item.url;
+      openPdfEl.href = Lightbox.openPdfHref(item);
       openPdfEl.style.display = '';
     } else {
       openPdfEl.style.display = 'none';

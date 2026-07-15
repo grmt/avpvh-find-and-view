@@ -5,6 +5,7 @@ export interface MeiliHit {
   text: string;
   collection: string;
   url: string;
+  source_url?: string | null;
   thumb_url: string;
   tags: string[];
   date: string | null;

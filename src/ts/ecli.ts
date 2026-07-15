@@ -4,6 +4,7 @@ interface EcliReference {
   collection: string;
   title: string;
   url: string;
+  source_url: string | null;
   page_number: number | null;
 }
 
@@ -41,7 +42,11 @@ function refLabel(r: EcliReference): string {
   return r.page_number != null ? `${name} — pagina ${r.page_number}` : name;
 }
 
+// Prefer the original publisher/repository URL over our own hosted copy —
+// page-number deep-linking only applies to the locally-hosted PDF, since we
+// can't guarantee the external source paginates identically.
 function refHref(r: EcliReference): string {
+  if (r.source_url) return r.source_url;
   return r.page_number != null ? `${r.url}#page=${r.page_number}` : r.url;
 }
 
