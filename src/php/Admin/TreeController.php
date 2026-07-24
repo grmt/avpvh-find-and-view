@@ -187,6 +187,7 @@ final class TreeController {
 					array_keys( $parts )
 				);
 				$label = $file->getBasename( '.txt' );
+				$ext   = self::image_extension( $dir, $label );
 				$docs[] = [
 					'id'          => self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label ),
 					'type'        => 'scan',
@@ -194,8 +195,8 @@ final class TreeController {
 					'collection'  => $collection,
 					'page_number' => (int) $m[1],
 					'text'        => $text,
-					'url'         => $base_url . '/' . $collection . '/' . $label . '.png',
-					'thumb_url'   => $base_url . '/' . $collection . '/' . $label . '.png',
+					'url'         => $base_url . '/' . $collection . '/' . $label . '.' . $ext,
+					'thumb_url'   => $base_url . '/' . $collection . '/' . $label . '.' . $ext,
 					'tags'        => $tags,
 					'date'        => null,
 				];
@@ -358,6 +359,21 @@ final class TreeController {
 	 */
 	private static function sanitize_id( string $raw ): string {
 		return preg_replace( '/[^A-Za-z0-9_-]/', '_', $raw ) ?? $raw;
+	}
+
+	/**
+	 * Page images aren't always PNG (Document AI/pdftoppm output is, but
+	 * plain photo scans like photo scans are JPG). Detect whichever
+	 * extension actually exists next to the page's text file instead of
+	 * assuming PNG and producing a 404'ing url/thumb_url.
+	 */
+	private static function image_extension( string $dir, string $label ): string {
+		foreach ( [ 'png', 'jpg', 'jpeg' ] as $ext ) {
+			if ( file_exists( $dir . '/' . $label . '.' . $ext ) ) {
+				return $ext;
+			}
+		}
+		return 'png';
 	}
 
 	/**
