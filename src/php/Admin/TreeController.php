@@ -188,7 +188,7 @@ final class TreeController {
 				);
 				$label = $file->getBasename( '.txt' );
 				$docs[] = [
-					'id'          => str_replace( '/', '__', $collection ) . '__' . $label,
+					'id'          => self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label ),
 					'type'        => 'scan',
 					'title'       => $collection,
 					'collection'  => $collection,
@@ -352,6 +352,15 @@ final class TreeController {
 	}
 
 	/**
+	 * Meilisearch document IDs allow only [A-Za-z0-9_-]. Folder/file names
+	 * routinely contain accents (José, Café) or spaces, so anything else
+	 * gets replaced with an underscore rather than rejecting the whole batch.
+	 */
+	private static function sanitize_id( string $raw ): string {
+		return preg_replace( '/[^A-Za-z0-9_-]/', '_', $raw ) ?? $raw;
+	}
+
+	/**
 	 * Returns a match key: [text_skeleton, [int, int, ...]]
 	 * e.g. "Archive-Box-03b" → ["archive-box-b", [3]]
 	 *      "Letters-01-05" → ["letters--",   [1, 5]]
@@ -471,7 +480,7 @@ final class TreeController {
 				$new_docs = [];
 				foreach ( $old_cols[ $map['old'] ] as $doc ) {
 					$label      = 'page_' . str_pad( (string) $doc['page_number'], strlen( (string) $map['pages'] ) > 2 ? 3 : 2, '0', STR_PAD_LEFT );
-					$new_id     = str_replace( '/', '__', $map['new'] ) . '__' . $label;
+					$new_id     = self::sanitize_id( str_replace( '/', '__', $map['new'] ) . '__' . $label );
 					$new_docs[] = array_merge( $doc, [
 						'id'         => $new_id,
 						'collection' => $map['new'],
