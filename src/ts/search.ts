@@ -185,6 +185,7 @@ function initInstance(cfg: FavConfig): void {
   const filterTreeEl = document.getElementById(`${cfg.uid}-filter-tree`);
   let colTreeUl: HTMLUListElement | null = null;
   let pgTreeUl: HTMLUListElement | null = null;
+  let postTreeUl: HTMLUListElement | null = null;
 
   function makeTopFolder(label: string, onToggle: () => void): { li: HTMLLIElement; ul: HTMLUListElement } {
     const ul = document.createElement('ul');
@@ -236,6 +237,10 @@ function initInstance(cfg: FavConfig): void {
       const { li, ul } = makeTopFolder('Pagina\'s', () => applyPageFilter());
       rootUl.appendChild(li);
       pgTreeUl = ul;
+
+      const berichtenFolder = makeTopFolder('Berichten', () => applyPageFilter());
+      rootUl.appendChild(berichtenFolder.li);
+      postTreeUl = berichtenFolder.ul;
     }
   }
 
@@ -325,19 +330,22 @@ function initInstance(cfg: FavConfig): void {
     }
   }
 
-  // Page tree filter (content index, hierarchy from URL path)
+  // Page & post tree filter (content index): pages by URL path, posts by Jaar/Maand
   if (pgTreeUl) {
     fetch(`${cfg.meiliUrl}/indexes/${cfg.contentIndex}/search`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: '', limit: 1000, attributesToRetrieve: ['id', 'title', 'url'] }),
+      body: JSON.stringify({ q: '', limit: 1000, attributesToRetrieve: ['id', 'title', 'url', 'type', 'date'] }),
     })
       .then(r => r.json())
-      .then((data: { hits?: Array<{ id: string; title: string; url: string }> }) => {
+      .then((data: { hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }) => {
         const docs = (data.hits ?? []).filter(d => d.url);
         if (!docs.length) return;
         const baseUrl = docs[0].url.replace(/^(https?:\/\/[^/]+).*/, '$1');
         const urlToTitle = new Map(docs.map(d => [d.url, d.title]));
+
+        const pageDocs = docs.filter(d => d.type !== 'post');
+        const postDocs = docs.filter(d => d.type === 'post');
 
         const pgTree: Record<string, PgNode> = {};
 
@@ -348,7 +356,7 @@ function initInstance(cfg: FavConfig): void {
         // Two top-level buckets: normal tree + "(overige)" for auto-slugged pages
         const overige: PgNode[] = [];
 
-        const sorted = [...docs].sort((a, b) => a.url.length - b.url.length);
+        const sorted = [...pageDocs].sort((a, b) => a.url.length - b.url.length);
         for (const doc of sorted) {
           const path = doc.url.slice(baseUrl.length).replace(/^\/|\/$/g, '');
           if (!path) continue;
@@ -380,10 +388,31 @@ function initInstance(cfg: FavConfig): void {
           };
         }
 
-        function renderPgNode(tree: Record<string, PgNode>): HTMLUListElement {
+        // Post tree: Jaar > Maand > Bericht, newest first
+        const monthNames = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+        const postTree: Record<string, PgNode> = {};
+        for (const doc of postDocs) {
+          const d = doc.date;
+          if (!d) continue;
+          const year = d.slice(0, 4);
+          const month = d.slice(5, 7);
+          if (!postTree[year]) postTree[year] = { url: '', title: year, children: {} };
+          const yearNode = postTree[year];
+          if (!yearNode.children[month]) {
+            const label = monthNames[parseInt(month, 10) - 1] ?? month;
+            yearNode.children[month] = { url: '', title: label.charAt(0).toUpperCase() + label.slice(1), children: {} };
+          }
+          yearNode.children[month].children[`${d}_${doc.id}`] = { url: doc.url, title: doc.title || doc.url, children: {} };
+        }
+        const dateDesc = (a: [string, PgNode], b: [string, PgNode]): number => b[0].localeCompare(a[0]);
+
+        function renderPgNode(
+          tree: Record<string, PgNode>,
+          compareFn: (a: [string, PgNode], b: [string, PgNode]) => number = (a, b) => a[1].title.localeCompare(b[1].title, 'nl'),
+        ): HTMLUListElement {
           const ul = document.createElement('ul');
           ul.className = 'fav-col-tree';
-          for (const [, nd] of Object.entries(tree).sort(([, a], [, b]) => a.title.localeCompare(b.title, 'nl'))) {
+          for (const [, nd] of Object.entries(tree).sort(compareFn)) {
             const hasChildren = Object.keys(nd.children).length > 0;
             const li = document.createElement('li');
             li.className = hasChildren ? 'fav-col-tree-folder' : 'fav-col-tree-leaf';
@@ -417,7 +446,7 @@ function initInstance(cfg: FavConfig): void {
             label.append(` ${nd.title}`);
             row.appendChild(label);
             li.appendChild(row);
-            if (hasChildren) li.appendChild(renderPgNode(nd.children));
+            if (hasChildren) li.appendChild(renderPgNode(nd.children, compareFn));
             ul.appendChild(li);
           }
           return ul;
@@ -439,6 +468,11 @@ function initInstance(cfg: FavConfig): void {
         const built = renderPgNode(pgTree);
         while (built.firstChild) pgTreeUl!.appendChild(built.firstChild);
 
+        if (postTreeUl) {
+          const builtPosts = renderPgNode(postTree, dateDesc);
+          while (builtPosts.firstChild) postTreeUl.appendChild(builtPosts.firstChild);
+        }
+
         pageTreeData = pgTree;
         if (pageBrowseGrid) renderPageBrowseLevel(pageBrowsePath);
       })
@@ -446,7 +480,10 @@ function initInstance(cfg: FavConfig): void {
   }
 
   function applyPageFilter(): void {
-    const allCbs = [...(pgTreeUl?.querySelectorAll<HTMLInputElement>('input[data-page-url]') ?? [])];
+    const allCbs = [
+      ...(pgTreeUl?.querySelectorAll<HTMLInputElement>('input[data-page-url]') ?? []),
+      ...(postTreeUl?.querySelectorAll<HTMLInputElement>('input[data-page-url]') ?? []),
+    ];
     const visibleCbs = allCbs.filter(cb => !cb.closest('li')?.hidden);
     const checked = visibleCbs.filter(cb => cb.checked).map(cb => cb.dataset['pageUrl']!).filter(Boolean);
     const allChecked = checked.length === visibleCbs.length;
