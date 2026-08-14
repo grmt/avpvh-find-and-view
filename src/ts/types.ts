@@ -10,6 +10,7 @@ export interface MeiliHit {
   tags: string[];
   date: string | null;
   page_number: number | null;
+  text_format?: 'md' | 'text' | null;
   _snippetResult?: { text?: { value: string } };
   _formatted?: { text?: string };
 }

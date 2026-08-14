@@ -2,9 +2,15 @@ import '../css/search.css';
 import instantsearch from 'instantsearch.js';
 import { searchBox, hits, pagination, configure, index } from 'instantsearch.js/es/widgets';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 import { Lightbox, type LightboxItem } from './lightbox';
 import { BrowseMode } from './browse';
 import type { FavConfig, MeiliHit } from './types';
+
+function renderMarkdown(src: string): string {
+  return DOMPurify.sanitize(marked.parse(src, { async: false }));
+}
 
 function parseContains(q: string): string {
   return q
@@ -699,7 +705,7 @@ function initInstance(cfg: FavConfig): void {
             q: query,
             filter: `collection = "${collection}"`,
             limit: 5000,
-            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection'],
+            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection', 'text_format'],
             ...(highlight ? { attributesToHighlight: ['text'], highlightPreTag: '<em>', highlightPostTag: '</em>' } : {}),
           }),
         }).then(r => r.json());
@@ -719,10 +725,12 @@ function initInstance(cfg: FavConfig): void {
             const matchHit = matchMap.get(h.id);
             const isMatch = matchHit != null;
             const highlighted = matchHit?._formatted?.text ?? h.text;
-            const html = highlighted
-              .split(/\n\n+/)
-              .map(p => `<p style="margin:0 0 .8em">${p.replace(/\n/g, '<br>')}</p>`)
-              .join('');
+            const html = h.text_format === 'md'
+              ? renderMarkdown(highlighted)
+              : highlighted
+                .split(/\n\n+/)
+                .map(p => `<p style="margin:0 0 .8em">${p.replace(/\n/g, '<br>')}</p>`)
+                .join('');
             const caption = (h.collection ?? '') + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
             const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
             const highlightTerms = isMatch

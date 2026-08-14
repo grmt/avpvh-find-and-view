@@ -105,7 +105,7 @@ final class TreeController {
 			$full = $dir . '/' . $entry;
 			if ( is_dir( $full ) ) {
 				$children[] = $this->build_tree( $full, $root );
-			} elseif ( preg_match( '/^page_\d+\.(png|jpg|txt)$/i', $entry ) ) {
+			} elseif ( preg_match( '/^page_\d+\.(png|jpg|txt|md)$/i', $entry ) ) {
 				$is_leaf = true;
 			}
 		}
@@ -173,8 +173,9 @@ final class TreeController {
 			);
 
 			foreach ( $it as $file ) {
-				if ( $file->getExtension() !== 'txt' ) continue;
-				if ( ! preg_match( '/^page_(\d+)\.txt$/', $file->getFilename(), $m ) ) continue;
+				$src_ext = $file->getExtension();
+				if ( $src_ext !== 'txt' && $src_ext !== 'md' ) continue;
+				if ( ! preg_match( '/^page_(\d+)\.(?:txt|md)$/i', $file->getFilename(), $m ) ) continue;
 
 				$text = trim( (string) file_get_contents( $file->getPathname() ) );
 				if ( $text === '' ) continue;
@@ -186,7 +187,7 @@ final class TreeController {
 					static fn( $i ) => implode( '/', array_slice( $parts, 0, $i + 1 ) ),
 					array_keys( $parts )
 				);
-				$label = $file->getBasename( '.txt' );
+				$label = $file->getBasename( '.' . $src_ext );
 				$ext   = self::image_extension( $dir, $label );
 				$docs[] = [
 					'id'          => self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label ),
@@ -195,6 +196,7 @@ final class TreeController {
 					'collection'  => $collection,
 					'page_number' => (int) $m[1],
 					'text'        => $text,
+					'text_format' => $src_ext === 'md' ? 'md' : 'text',
 					'url'         => $base_url . '/' . $collection . '/' . $label . '.' . $ext,
 					'thumb_url'   => $base_url . '/' . $collection . '/' . $label . '.' . $ext,
 					'tags'        => $tags,
