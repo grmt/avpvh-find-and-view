@@ -484,9 +484,12 @@ function initInstance(cfg: FavConfig): void {
       ...(pgTreeUl?.querySelectorAll<HTMLInputElement>('input[data-page-url]') ?? []),
       ...(postTreeUl?.querySelectorAll<HTMLInputElement>('input[data-page-url]') ?? []),
     ];
-    const visibleCbs = allCbs.filter(cb => !cb.closest('li')?.hidden);
-    const checked = visibleCbs.filter(cb => cb.checked).map(cb => cb.dataset['pageUrl']!).filter(Boolean);
-    const allChecked = checked.length === visibleCbs.length;
+    // Structural folders (e.g. Berichten's Jaar/Maand grouping) carry an empty
+    // data-page-url and must be excluded from the "everything selected" tally,
+    // otherwise it never matches and a real (large) filter gets sent needlessly.
+    const realCbs = allCbs.filter(cb => cb.dataset['pageUrl'] && !cb.closest('li')?.hidden);
+    const checked = realCbs.filter(cb => cb.checked).map(cb => cb.dataset['pageUrl']!);
+    const allChecked = checked.length === realCbs.length;
     pageFilter = allChecked
       ? null
       : checked.length

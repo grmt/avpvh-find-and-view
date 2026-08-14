@@ -34,6 +34,15 @@ final class IndexCommand {
 		] );
 
 		$index = Settings::content_index();
+
+		// The page/post filter tree (search.ts) filters by exact url, so the
+		// content index must have it filterable — otherwise Meilisearch rejects
+		// any query that includes a url filter.
+		$client->ensure_settings( $index, [
+			'filterableAttributes' => [ 'url', 'type', 'date' ],
+			'sortableAttributes'   => [ 'date' ],
+		] );
+
 		$batch = [];
 		foreach ( $posts as $post ) {
 			$item = PostIndexer::from_post( $post );
