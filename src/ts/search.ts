@@ -705,7 +705,7 @@ function initInstance(cfg: FavConfig): void {
             q: query,
             filter: `collection = "${collection}"`,
             limit: 5000,
-            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection', 'text_format'],
+            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection', 'text_format', 'has_image'],
             ...(highlight ? { attributesToHighlight: ['text'], highlightPreTag: '<em>', highlightPostTag: '</em>' } : {}),
           }),
         }).then(r => r.json());
@@ -733,12 +733,13 @@ function initInstance(cfg: FavConfig): void {
                 .join('');
             const caption = (h.collection ?? '') + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
             const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
+            const hasImage = h.has_image !== false;
             const highlightTerms = isMatch
               ? Array.from(new Set(Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean)))
               : [];
             return isPdf
               ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text: html, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch }
-              : { url: h.url, caption, text: html, isMatch };
+              : { url: h.url, caption, text: html, isMatch, ...(hasImage ? {} : { kind: 'text' as const }) };
           });
 
           const startIdx = allHits.findIndex(h => h.id === hitId);

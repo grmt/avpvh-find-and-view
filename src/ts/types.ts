@@ -11,6 +11,7 @@ export interface MeiliHit {
   date: string | null;
   page_number: number | null;
   text_format?: 'md' | 'text' | null;
+  has_image?: boolean;
   _snippetResult?: { text?: { value: string } };
   _formatted?: { text?: string };
 }

@@ -187,8 +187,14 @@ final class TreeController {
 					static fn( $i ) => implode( '/', array_slice( $parts, 0, $i + 1 ) ),
 					array_keys( $parts )
 				);
-				$label = $file->getBasename( '.' . $src_ext );
-				$ext   = self::image_extension( $dir, $label );
+				$label     = $file->getBasename( '.' . $src_ext );
+				$img_ext   = self::image_extension( $dir, $label );
+				$has_image = $img_ext !== null;
+				// Without a scan image, point url at the source .md/.txt itself
+				// (a real, existing file) rather than a guessed image path that
+				// would just 404 — the frontend hides the image panel entirely
+				// when has_image is false.
+				$asset  = $has_image ? $label . '.' . $img_ext : $file->getFilename();
 				$docs[] = [
 					'id'          => self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label ),
 					'type'        => 'scan',
@@ -197,8 +203,9 @@ final class TreeController {
 					'page_number' => (int) $m[1],
 					'text'        => $text,
 					'text_format' => $src_ext === 'md' ? 'md' : 'text',
-					'url'         => $base_url . '/' . $collection . '/' . $label . '.' . $ext,
-					'thumb_url'   => $base_url . '/' . $collection . '/' . $label . '.' . $ext,
+					'has_image'   => $has_image,
+					'url'         => $base_url . '/' . $collection . '/' . $asset,
+					'thumb_url'   => $has_image ? $base_url . '/' . $collection . '/' . $asset : null,
 					'tags'        => $tags,
 					'date'        => null,
 				];
@@ -367,15 +374,17 @@ final class TreeController {
 	 * Page images aren't always PNG (Document AI/pdftoppm output is, but
 	 * plain photo scans like photo scans are JPG). Detect whichever
 	 * extension actually exists next to the page's text file instead of
-	 * assuming PNG and producing a 404'ing url/thumb_url.
+	 * assuming PNG and producing a 404'ing url/thumb_url. Returns null when
+	 * no image exists at all (e.g. a born-digital .md transcript with no
+	 * scan) so the caller can fall back to the source file instead.
 	 */
-	private static function image_extension( string $dir, string $label ): string {
+	private static function image_extension( string $dir, string $label ): ?string {
 		foreach ( [ 'png', 'jpg', 'jpeg' ] as $ext ) {
 			if ( file_exists( $dir . '/' . $label . '.' . $ext ) ) {
 				return $ext;
 			}
 		}
-		return 'png';
+		return null;
 	}
 
 	/**

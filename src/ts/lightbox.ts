@@ -22,7 +22,7 @@ export interface LightboxItem {
   sourceUrl?: string;
   caption: string;
   text: string;
-  kind?: 'image' | 'pdf';
+  kind?: 'image' | 'pdf' | 'text';
   page?: number;
   highlightTerms?: string[];
   isMatch?: boolean;
@@ -333,31 +333,54 @@ export class Lightbox {
 
     const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
     const loadingEl = el.querySelector('.fav-lb-loading') as HTMLElement;
+    const imgOuterEl = el.querySelector('.fav-lb-img-outer') as HTMLElement;
+    const toggleImgBtn = el.querySelector('.fav-lb-toggle-img') as HTMLButtonElement;
+    const toggleTextBtn = el.querySelector('.fav-lb-toggle-text') as HTMLButtonElement;
 
     this.highlightRects = [];
     this.renderHighlights();
 
-    if (item.kind === 'pdf' && item.page != null) {
+    // Text-only items (e.g. a born-digital .md transcript with no scan
+    // image) have nothing to show in the image panel at all — hide it
+    // outright rather than trying to load a url that was never a real
+    // image, regardless of the toolbar's img/text toggle state. Both
+    // toggle buttons are hidden too, since there's nothing to toggle:
+    // the text panel is the only content and must stay visible.
+    const hasImage = item.kind !== 'text';
+    toggleImgBtn.style.display = hasImage ? '' : 'none';
+    toggleTextBtn.style.display = hasImage ? '' : 'none';
+
+    const textWrapEl = el.querySelector('.fav-lb-text-wrap') as HTMLElement;
+    if (!hasImage) {
       imgEl.style.display = 'none';
-      loadingEl.style.display = '';
-      loadingEl.textContent = 'Laden…';
-      this.renderPdfPage(item.url, item.page, item.highlightTerms ?? [])
-        .then(({ blobUrl, rects }) => {
-          if (token !== this.showToken) return; // superseded by newer navigation
-          if (!blobUrl) { loadingEl.textContent = 'Kon PDF-pagina niet laden.'; return; }
-          this.highlightRects = rects;
-          this.setImage(blobUrl);
-          imgEl.style.display = '';
-          loadingEl.style.display = 'none';
-        })
-        .catch(() => {
-          if (token !== this.showToken) return;
-          loadingEl.textContent = 'Kon PDF-pagina niet laden.';
-        });
-    } else {
       loadingEl.style.display = 'none';
-      imgEl.style.display = '';
-      this.setImage(item.url);
+      imgOuterEl.style.display = 'none';
+      textWrapEl.style.display = ''; // override any leftover hiddenPanel:'text' from a prior item
+    } else {
+      textWrapEl.style.display = this.hiddenPanel === 'text' ? 'none' : '';
+      imgOuterEl.style.display = this.hiddenPanel === 'img' ? 'none' : '';
+      if (item.kind === 'pdf' && item.page != null) {
+        imgEl.style.display = 'none';
+        loadingEl.style.display = '';
+        loadingEl.textContent = 'Laden…';
+        this.renderPdfPage(item.url, item.page, item.highlightTerms ?? [])
+          .then(({ blobUrl, rects }) => {
+            if (token !== this.showToken) return; // superseded by newer navigation
+            if (!blobUrl) { loadingEl.textContent = 'Kon PDF-pagina niet laden.'; return; }
+            this.highlightRects = rects;
+            this.setImage(blobUrl);
+            imgEl.style.display = '';
+            loadingEl.style.display = 'none';
+          })
+          .catch(() => {
+            if (token !== this.showToken) return;
+            loadingEl.textContent = 'Kon PDF-pagina niet laden.';
+          });
+      } else {
+        loadingEl.style.display = 'none';
+        imgEl.style.display = '';
+        this.setImage(item.url);
+      }
     }
 
     const openPdfEl = el.querySelector('.fav-lb-open-pdf') as HTMLAnchorElement;
