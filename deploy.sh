@@ -31,6 +31,7 @@ fs.writeFileSync('${PKG_FILE}', JSON.stringify(pkg, null, 2) + '\n');
 # 5. Build
 npx vite build --config config/vite/search.config.ts
 npx vite build --config config/vite/ecli.config.ts
+npx vite build --config config/vite/tree.config.ts
 
 # 6. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/
 for site in site1 site2 site3; do
