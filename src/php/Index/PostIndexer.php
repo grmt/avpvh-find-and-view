@@ -6,7 +6,11 @@ final class PostIndexer {
 	public static function from_post( \WP_Post $post ): ?IndexItem {
 		if ( $post->post_status !== 'publish' ) return null;
 
-		$own_text = trim( wp_strip_all_tags( strip_shortcodes( $post->post_content ) ) );
+		// Insert whitespace at block-level tag boundaries before stripping tags,
+		// otherwise adjacent elements with no text between them (e.g. one <p>
+		// per PDF line) get glued into a single unsearchable word.
+		$html     = preg_replace( '/<\/?(?:p|div|br|li|h[1-6]|tr|td|th|blockquote|section|article|ul|ol)\b[^>]*>/i', ' ', strip_shortcodes( $post->post_content ) );
+		$own_text = trim( preg_replace( '/\s+/u', ' ', wp_strip_all_tags( $html ) ) );
 		if ( mb_strlen( $own_text ) < 20 ) return null;
 
 		$tags = [];
