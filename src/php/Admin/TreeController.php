@@ -4,6 +4,7 @@ namespace Avpvh\FindAndView\Admin;
 
 use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Settings;
+use Meilisearch\Contracts\DocumentsQuery;
 
 final class TreeController {
 
@@ -82,8 +83,25 @@ final class TreeController {
 		] );
 	}
 
+	// A site-level media-privacy plugin (avpvh-members) buckets uploads into
+	// wp-content/uploads/private or /public via a subdir/path/url filter, but
+	// leaves wp_upload_dir()['basedir'] itself pointing at the plain uploads
+	// root. Scans are deliberately kept private, so /scans normally lives
+	// under the private bucket -- fall back there when the plain path (what
+	// the unfiltered basedir naively implies) doesn't actually exist.
 	private function scan_root(): string {
-		return wp_upload_dir()['basedir'] . '/scans';
+		$base = wp_upload_dir()['basedir'] . '/scans';
+		if ( is_dir( $base ) ) return $base;
+		$private = wp_upload_dir()['basedir'] . '/private/scans';
+		return is_dir( $private ) ? $private : $base;
+	}
+
+	// Matches whichever bucket scan_root() resolved to, so generated
+	// url/thumb_url fields actually point at the scans that are there.
+	private function scan_base_url(): string {
+		$dirs = wp_upload_dir();
+		$rel  = substr( $this->scan_root(), strlen( $dirs['basedir'] ) );
+		return $dirs['baseurl'] . $rel;
 	}
 
 	private function safe_path( string $rel ): string|false {
@@ -161,7 +179,7 @@ final class TreeController {
 		$result = $this->meili_client_and_index();
 		if ( is_wp_error( $result ) ) return $result;
 		[ $client, $index,, $s ] = $result;
-		$base_url = wp_upload_dir()['baseurl'] . '/scans';
+		$base_url = $this->scan_base_url();
 
 		try {
 
@@ -223,10 +241,36 @@ final class TreeController {
 
 			if ( $docs ) {
 				$task = $index->addDocuments( $docs );
-				$client->waitForTask( $task['taskUid'] );
+				$client->waitForTask( $task['taskUid'], 60000 );
 			}
 
-			return new \WP_REST_Response( [ 'indexed' => count( $docs ) ] );
+			// This index also holds 'photo' and 'find' docs from a separate
+			// indexer, so only scan docs no longer found on disk (a page
+			// deleted or a whole collection moved/removed) are candidates
+			// for pruning — otherwise a scan doc from before this reindex
+			// run would never get dropped when its source file goes away.
+			$current_ids = array_column( $docs, 'id' );
+			$existing_ids = [];
+			$offset = 0;
+			do {
+				$page = $index->getDocuments(
+					( new DocumentsQuery() )
+						->setFilter( [ 'type = scan' ] )
+						->setFields( [ 'id' ] )
+						->setLimit( 1000 )
+						->setOffset( $offset )
+				);
+				foreach ( $page->getResults() as $doc ) $existing_ids[] = $doc['id'];
+				$offset += 1000;
+			} while ( $offset < $page->getTotal() );
+
+			$stale_ids = array_values( array_diff( $existing_ids, $current_ids ) );
+			if ( $stale_ids ) {
+				$del_task = $index->deleteDocuments( $stale_ids );
+				$client->waitForTask( $del_task['taskUid'], 60000 );
+			}
+
+			return new \WP_REST_Response( [ 'indexed' => count( $docs ), 'pruned' => count( $stale_ids ) ] );
 
 		} catch ( \Exception $e ) {
 			return new \WP_Error( 'meili_error', $e->getMessage(), [ 'status' => 500 ] );
@@ -419,7 +463,7 @@ final class TreeController {
 		if ( is_wp_error( $result ) ) return $result;
 		[ $client, $index, $meili_url, $s ] = $result;
 		$dry_run  = (bool) ( $req['dry_run'] ?? true );
-		$base_url = wp_upload_dir()['baseurl'] . '/scans';
+		$base_url = $this->scan_base_url();
 
 		try {
 			// 1. Build new structure from server PNGs: normalized_leaf → [collection, page_count]
