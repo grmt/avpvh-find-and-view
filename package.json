@@ -1,6 +1,6 @@
 {
   "name": "avpvh-find-and-view",
-  "version": "0.1.29",
+  "version": "0.1.32",
   "description": "Find and view photos, archaeological finds, and scanned documents stored in Google Drive",
   "license": "MIT",
   "author": "grmt",
@@ -15,6 +15,7 @@
     "build:gulp": "gulp --gulpfile config/gulpfile.js --cwd . --color build",
     "build:js:search": "vite build --config config/vite/search.config.ts",
     "build:js:ecli": "vite build --config config/vite/ecli.config.ts",
+    "build:js:tree": "vite build --config config/vite/tree.config.ts",
     "build:js": "run-p -c --aggregate-output build:js:*",
     "build": "run-p -c --aggregate-output build:*",
     "lint:css": "stylelint --config config/stylelint.config.js --color 'src/**/*.css'",

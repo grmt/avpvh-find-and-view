@@ -301,33 +301,41 @@ async function remap(dry_run = true) {
 	}
 }
 
+// Briefly shows a result message in place of the button's own label instead
+// of alert(), which blocks the whole tab (and, worse, the extension driving
+// it) until someone clicks OK.
+function flashButtonStatus(btn: HTMLButtonElement, message: string, resetLabel: string, ms = 4000): void {
+	btn.textContent = message;
+	setTimeout(() => { btn.textContent = resetLabel; }, ms);
+}
+
 async function reindex() {
 	const btn = document.getElementById('fav-tree-reindex') as HTMLButtonElement;
+	const label = 'Herindex scans';
 	btn.disabled = true;
 	btn.textContent = 'Bezig…';
 	try {
 		const res: { indexed: number } = await apiFetch('tree/reindex', { method: 'POST' });
-		alert(`Klaar — ${res.indexed} pagina's geïndexeerd.`);
+		flashButtonStatus(btn, `Klaar — ${res.indexed} pagina's geïndexeerd.`, label);
 	} catch (err) {
-		alert('Fout: ' + err);
+		flashButtonStatus(btn, 'Fout: ' + err, label);
 	} finally {
 		btn.disabled = false;
-		btn.textContent = 'Herindex scans';
 	}
 }
 
 async function reindexContent() {
 	const btn = document.getElementById('fav-tree-reindex-content') as HTMLButtonElement;
+	const label = "Herindex pagina's";
 	btn.disabled = true;
 	btn.textContent = 'Bezig…';
 	try {
 		const res: { indexed: number } = await apiFetch('tree/reindex-content', { method: 'POST' });
-		alert(`Klaar — ${res.indexed} pagina's en berichten geïndexeerd.`);
+		flashButtonStatus(btn, `Klaar — ${res.indexed} pagina's en berichten geïndexeerd.`, label);
 	} catch (err) {
-		alert('Fout: ' + err);
+		flashButtonStatus(btn, 'Fout: ' + err, label);
 	} finally {
 		btn.disabled = false;
-		btn.textContent = "Herindex pagina's";
 	}
 }
 
