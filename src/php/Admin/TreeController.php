@@ -194,9 +194,17 @@ final class TreeController {
 				// (a real, existing file) rather than a guessed image path that
 				// would just 404 — the frontend hides the image panel entirely
 				// when has_image is false.
-				$asset  = $has_image ? $label . '.' . $img_ext : $file->getFilename();
-				$docs[] = [
-					'id'          => self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label ),
+				$asset = $has_image ? $label . '.' . $img_ext : $file->getFilename();
+				$id    = self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label );
+
+				// A page_N.txt and page_N.md in the same folder share this id.
+				// Prefer the .md — it's the deliberately-authored transcript —
+				// over the .txt, regardless of which one the directory
+				// iterator happens to visit last.
+				if ( isset( $docs[ $id ] ) && $docs[ $id ]['text_format'] === 'md' && $src_ext !== 'md' ) continue;
+
+				$docs[ $id ] = [
+					'id'          => $id,
 					'type'        => 'scan',
 					'title'       => $collection,
 					'collection'  => $collection,
@@ -210,6 +218,8 @@ final class TreeController {
 					'date'        => null,
 				];
 			}
+
+			$docs = array_values( $docs );
 
 			if ( $docs ) {
 				$task = $index->addDocuments( $docs );
