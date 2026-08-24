@@ -62,6 +62,13 @@ export class Lightbox {
     return item.page != null ? `${item.url}#page=${item.page}` : item.url;
   }
 
+  // Remembers the user's preferred image/text split across lightbox opens
+  // and page loads — landscape (side-by-side) and portrait (stacked) are
+  // tracked separately since a good width fraction isn't a good height
+  // fraction.
+  private static readonly SPLIT_KEY_LANDSCAPE = 'avpvh-fav-lb-split-landscape';
+  private static readonly SPLIT_KEY_PORTRAIT = 'avpvh-fav-lb-split-portrait';
+
   private static readonly FULLSCREEN_ENTER_SVG =
     '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>';
   private static readonly FULLSCREEN_EXIT_SVG =
@@ -163,6 +170,7 @@ export class Lightbox {
             <button class="fav-lb-zbtn">+</button>
           </div>
         </div>
+        <div class="fav-lb-resizer"></div>
         <div class="fav-lb-text-wrap">
           <div class="fav-lb-text-bar">Tekst &nbsp;
             <button class="fav-lb-zbtn">&#x2212;</button>
@@ -293,8 +301,53 @@ export class Lightbox {
     imgWrapEl.addEventListener('touchend', touchEnd, { passive: true });
     imgWrapEl.addEventListener('touchcancel', () => { touchMode = 'none'; }, { passive: true });
 
+    this.setupResizer();
+
     document.addEventListener('keydown', this.keyHandler);
     this.show(startIdx);
+  }
+
+  // Lets the user drag the bar between the image and text panels instead of
+  // being stuck with the fixed 36%/42% split — persisted per-orientation so
+  // it stays put across pages and future opens, not just the current view.
+  private setupResizer(): void {
+    const el = this.el!;
+    const resizer = el.querySelector('.fav-lb-resizer') as HTMLElement;
+    const body = el.querySelector('.fav-lb-body') as HTMLElement;
+    const textWrap = el.querySelector('.fav-lb-text-wrap') as HTMLElement;
+
+    const isLandscape = (): boolean => window.matchMedia('(orientation: landscape)').matches;
+    const storageKey = (): string => isLandscape() ? Lightbox.SPLIT_KEY_LANDSCAPE : Lightbox.SPLIT_KEY_PORTRAIT;
+
+    const applyFrac = (frac: number): void => {
+      if (isLandscape()) textWrap.style.width = `${frac * 100}%`;
+      else textWrap.style.height = `${frac * 100}%`;
+    };
+
+    const saved = parseFloat(localStorage.getItem(storageKey()) ?? '');
+    if (!isNaN(saved) && saved > 0 && saved < 1) applyFrac(saved);
+
+    resizer.addEventListener('pointerdown', (e: PointerEvent) => {
+      resizer.setPointerCapture(e.pointerId);
+      resizer.classList.add('fav-lb-resizing');
+    });
+    resizer.addEventListener('pointermove', (e: PointerEvent) => {
+      if (!resizer.hasPointerCapture(e.pointerId)) return;
+      const rect = body.getBoundingClientRect();
+      const landscape = isLandscape();
+      const raw = landscape
+        ? (rect.right - e.clientX) / rect.width
+        : (rect.bottom - e.clientY) / rect.height;
+      const frac = Math.max(0.15, Math.min(0.8, raw));
+      applyFrac(frac);
+      localStorage.setItem(storageKey(), String(frac));
+    });
+    const stopDrag = (e: PointerEvent): void => {
+      if (resizer.hasPointerCapture(e.pointerId)) resizer.releasePointerCapture(e.pointerId);
+      resizer.classList.remove('fav-lb-resizing');
+    };
+    resizer.addEventListener('pointerup', stopDrag);
+    resizer.addEventListener('pointercancel', stopDrag);
   }
 
   // Only one panel can be hidden at a time — hiding both would leave nothing
@@ -304,6 +357,7 @@ export class Lightbox {
     const el = this.el!;
     (el.querySelector('.fav-lb-img-outer') as HTMLElement).style.display = this.hiddenPanel === 'img' ? 'none' : '';
     (el.querySelector('.fav-lb-text-wrap') as HTMLElement).style.display = this.hiddenPanel === 'text' ? 'none' : '';
+    (el.querySelector('.fav-lb-resizer') as HTMLElement).style.display = this.hiddenPanel ? 'none' : '';
     el.querySelector('.fav-lb-toggle-img')!.classList.toggle('fav-lb-active', this.hiddenPanel === 'img');
     el.querySelector('.fav-lb-toggle-text')!.classList.toggle('fav-lb-active', this.hiddenPanel === 'text');
     this.renderHighlights();
@@ -362,14 +416,17 @@ export class Lightbox {
     toggleTextBtn.style.display = hasImage ? '' : 'none';
 
     const textWrapEl = el.querySelector('.fav-lb-text-wrap') as HTMLElement;
+    const resizerEl = el.querySelector('.fav-lb-resizer') as HTMLElement;
     if (!hasImage) {
       imgEl.style.display = 'none';
       loadingEl.style.display = 'none';
       imgOuterEl.style.display = 'none';
       textWrapEl.style.display = ''; // override any leftover hiddenPanel:'text' from a prior item
+      resizerEl.style.display = 'none';
     } else {
       textWrapEl.style.display = this.hiddenPanel === 'text' ? 'none' : '';
       imgOuterEl.style.display = this.hiddenPanel === 'img' ? 'none' : '';
+      resizerEl.style.display = this.hiddenPanel ? 'none' : '';
       if (item.kind === 'pdf' && item.page != null) {
         imgEl.style.display = 'none';
         loadingEl.style.display = '';
