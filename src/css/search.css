@@ -111,7 +111,7 @@
 .fav-lb-text-wrap { display: flex; flex-direction: column; background: #fff; border-left: 1px solid #ddd; }
 @media (orientation: landscape) { .fav-lb-text-wrap { width: 36%; min-width: 220px; } }
 @media (orientation: portrait)  { .fav-lb-text-wrap { height: 42%; border-left: none; border-top: 1px solid #ddd; } }
-.fav-lb-resizer { flex: 0 0 6px; background: #333; touch-action: none; }
+.fav-lb-resizer { flex: 0 0 6px; background: rgba(255,255,255,.35); touch-action: none; }
 .fav-lb-resizer:hover, .fav-lb-resizer.fav-lb-resizing { background: #0073aa; }
 @media (orientation: landscape) { .fav-lb-resizer { cursor: col-resize; } }
 @media (orientation: portrait)  { .fav-lb-resizer { cursor: row-resize; } }
