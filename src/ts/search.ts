@@ -4,7 +4,7 @@ import { searchBox, hits, pagination, configure, index } from 'instantsearch.js/
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { Lightbox, type LightboxItem } from './lightbox';
 import { BrowseMode } from './browse';
-import { renderMarkdown, looksLikeMarkdown } from './markdown';
+import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 import type { FavConfig, MeiliHit } from './types';
 
 function parseContains(q: string): string {
@@ -720,12 +720,11 @@ function initInstance(cfg: FavConfig): void {
             const matchHit = matchMap.get(h.id);
             const isMatch = matchHit != null;
             const highlighted = matchHit?._formatted?.text ?? h.text;
-            const html = (h.text_format === 'md' || looksLikeMarkdown(h.text))
-              ? renderMarkdown(highlighted)
-              : highlighted
-                .split(/\n\n+/)
-                .map(p => `<p style="margin:0 0 .8em">${p.replace(/\n/g, '<br>')}</p>`)
-                .join('');
+            const isMd = h.text_format === 'md' || looksLikeMarkdown(h.text);
+            const mdHtml = renderMarkdown(highlighted);
+            const plainHtml = renderPlain(highlighted);
+            const html = isMd ? mdHtml : plainHtml;
+            const htmlAlt = highlighted ? (isMd ? plainHtml : mdHtml) : undefined;
             const caption = (h.collection ?? '') + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
             const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
             const hasImage = h.has_image !== false;
@@ -733,8 +732,8 @@ function initInstance(cfg: FavConfig): void {
               ? Array.from(new Set(Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean)))
               : [];
             return isPdf
-              ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text: html, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch }
-              : { url: h.url, caption, text: html, isMatch, ...(hasImage ? {} : { kind: 'text' as const }) };
+              ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text: html, textAlt: htmlAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch }
+              : { url: h.url, caption, text: html, textAlt: htmlAlt, isMatch, ...(hasImage ? {} : { kind: 'text' as const }) };
           });
 
           const startIdx = allHits.findIndex(h => h.id === hitId);
