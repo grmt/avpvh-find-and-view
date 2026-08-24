@@ -4,6 +4,7 @@ namespace Avpvh\FindAndView\Admin;
 
 use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Settings;
+use Meilisearch\Contracts\DocumentsQuery;
 
 final class TreeController {
 
@@ -226,7 +227,33 @@ final class TreeController {
 				$client->waitForTask( $task['taskUid'] );
 			}
 
-			return new \WP_REST_Response( [ 'indexed' => count( $docs ) ] );
+			// This index also holds 'photo' and 'find' docs from a separate
+			// indexer, so only scan docs no longer found on disk (a page
+			// deleted or a whole collection moved/removed) are candidates
+			// for pruning — otherwise a scan doc from before this reindex
+			// run would never get dropped when its source file goes away.
+			$current_ids = array_column( $docs, 'id' );
+			$existing_ids = [];
+			$offset = 0;
+			do {
+				$page = $index->getDocuments(
+					( new DocumentsQuery() )
+						->setFilter( [ 'type = scan' ] )
+						->setFields( [ 'id' ] )
+						->setLimit( 1000 )
+						->setOffset( $offset )
+				);
+				foreach ( $page->getResults() as $doc ) $existing_ids[] = $doc['id'];
+				$offset += 1000;
+			} while ( $offset < $page->getTotal() );
+
+			$stale_ids = array_values( array_diff( $existing_ids, $current_ids ) );
+			if ( $stale_ids ) {
+				$del_task = $index->deleteDocuments( $stale_ids );
+				$client->waitForTask( $del_task['taskUid'] );
+			}
+
+			return new \WP_REST_Response( [ 'indexed' => count( $docs ), 'pruned' => count( $stale_ids ) ] );
 
 		} catch ( \Exception $e ) {
 			return new \WP_Error( 'meili_error', $e->getMessage(), [ 'status' => 500 ] );
