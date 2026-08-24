@@ -1,6 +1,6 @@
 import type { FavConfig, MeiliHit } from './types';
 import type { Lightbox, LightboxItem } from './lightbox';
-import { renderMarkdown, looksLikeMarkdown } from './markdown';
+import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 
 const PAGE_SIZE = 60;
 
@@ -319,16 +319,16 @@ export class BrowseMode {
       const items: LightboxItem[] = allHits.map(h => {
         // Show only leaf collection name + page number (not full path)
         const caption = collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : '');
-        const text = !h.text
-          ? ''
-          : (h.text_format === 'md' || looksLikeMarkdown(h.text))
-            ? renderMarkdown(h.text)
-            : h.text.split(/\n\n+/).map(p => `<p style="margin:0 0 .8em">${p.replace(/\n/g, '<br>')}</p>`).join('');
+        const isMd = h.text_format === 'md' || (h.text ? looksLikeMarkdown(h.text) : false);
+        const mdHtml = h.text ? renderMarkdown(h.text) : '';
+        const plainHtml = h.text ? renderPlain(h.text) : '';
+        const text = isMd ? mdHtml : plainHtml;
+        const textAlt = h.text ? (isMd ? plainHtml : mdHtml) : undefined;
         const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
         const hasImage = h.has_image !== false;
         return isPdf
-          ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text, kind: 'pdf' as const, page: h.page_number ?? undefined }
-          : { url: h.url, caption, text, ...(hasImage ? {} : { kind: 'text' as const }) };
+          ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text, textAlt, kind: 'pdf' as const, page: h.page_number ?? undefined }
+          : { url: h.url, caption, text, textAlt, ...(hasImage ? {} : { kind: 'text' as const }) };
       });
 
       const startIdx = allHits.findIndex(h => h.id === hitId);

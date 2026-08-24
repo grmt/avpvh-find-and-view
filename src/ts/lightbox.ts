@@ -22,6 +22,10 @@ export interface LightboxItem {
   sourceUrl?: string;
   caption: string;
   text: string;
+  // The other rendering of the same source text — plain if `text` is
+  // Markdown-rendered, or Markdown-rendered if `text` is plain — so the
+  // viewer can override an auto-detection that guessed wrong either way.
+  textAlt?: string;
   kind?: 'image' | 'pdf' | 'text';
   page?: number;
   highlightTerms?: string[];
@@ -47,6 +51,7 @@ export class Lightbox {
   private showToken = 0;
   private highlightRects: HighlightRect[] = [];
   private hiddenPanel: 'img' | 'text' | null = null;
+  private showingAltText = false;
 
   // Prefer the original publisher/repository URL over our own hosted copy for
   // "open externally" actions (navigation, not the in-page PDF.js render,
@@ -163,6 +168,7 @@ export class Lightbox {
             <button class="fav-lb-zbtn">&#x2212;</button>
             <button class="fav-lb-zbtn">A</button>
             <button class="fav-lb-zbtn">+</button>
+            <button class="fav-lb-zbtn fav-lb-format-toggle" style="display:none;width:auto;padding:0 .5em" title="Wissel tussen opgemaakte en platte tekstweergave"></button>
           </div>
           <div class="fav-lb-text-content"></div>
         </div>
@@ -197,10 +203,15 @@ export class Lightbox {
     izBtns[1]?.addEventListener('click', () => this.setImgZoom(1));
     izBtns[2]?.addEventListener('click', () => this.setImgZoom(this.imgZoom * 1.3));
 
-    const tzBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-text-bar .fav-lb-zbtn'));
+    const tzBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-text-bar .fav-lb-zbtn:not(.fav-lb-format-toggle)'));
     tzBtns[0]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom / 1.2));
     tzBtns[1]?.addEventListener('click', () => this.setTxtZoom(1));
     tzBtns[2]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom * 1.2));
+
+    this.el.querySelector('.fav-lb-format-toggle')!.addEventListener('click', () => {
+      this.showingAltText = !this.showingAltText;
+      this.renderTextContent();
+    });
 
     this.el.querySelector('.fav-lb-img')!.addEventListener('load', () => this.renderHighlights());
 
@@ -407,9 +418,25 @@ export class Lightbox {
       (el.querySelector('.fav-lb-next-match') as HTMLButtonElement).disabled = this.findMatchIdx(1) < 0;
     }
 
+    this.showingAltText = false;
+    this.renderTextContent();
+  }
+
+  private renderTextContent(): void {
+    const el = this.el!;
+    const item = this.items[this.idx];
     const content = el.querySelector('.fav-lb-text-content')!;
-    content.innerHTML = item.text || '<span class="fav-lb-text-empty">Geen tekst beschikbaar.</span>';
+    const shown = (this.showingAltText ? item?.textAlt : undefined) ?? item?.text ?? '';
+    content.innerHTML = shown || '<span class="fav-lb-text-empty">Geen tekst beschikbaar.</span>';
     content.scrollTop = 0;
+
+    const toggleBtn = el.querySelector('.fav-lb-format-toggle') as HTMLButtonElement;
+    if (item?.textAlt) {
+      toggleBtn.style.display = '';
+      toggleBtn.textContent = this.showingAltText ? 'Opgemaakt' : 'Platte tekst';
+    } else {
+      toggleBtn.style.display = 'none';
+    }
   }
 
   private setImage(src: string): void {
