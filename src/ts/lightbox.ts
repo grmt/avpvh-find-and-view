@@ -307,25 +307,42 @@ export class Lightbox {
     this.show(startIdx);
   }
 
+  private static isLandscape(): boolean {
+    return window.matchMedia('(orientation: landscape)').matches;
+  }
+
+  private static splitStorageKey(): string {
+    return Lightbox.isLandscape() ? Lightbox.SPLIT_KEY_LANDSCAPE : Lightbox.SPLIT_KEY_PORTRAIT;
+  }
+
+  private applySplitFrac(frac: number): void {
+    const textWrap = this.el!.querySelector('.fav-lb-text-wrap') as HTMLElement;
+    if (Lightbox.isLandscape()) { textWrap.style.width = `${frac * 100}%`; textWrap.style.height = ''; }
+    else { textWrap.style.height = `${frac * 100}%`; textWrap.style.width = ''; }
+  }
+
+  // Re-applies the saved (or CSS-default) split — used whenever an item with
+  // an image panel is shown, since a text-only item in between (see below)
+  // temporarily overrides the text panel to full width/height.
+  private restoreSplit(): void {
+    const saved = parseFloat(localStorage.getItem(Lightbox.splitStorageKey()) ?? '');
+    if (!isNaN(saved) && saved > 0 && saved < 1) this.applySplitFrac(saved);
+    else {
+      const textWrap = this.el!.querySelector('.fav-lb-text-wrap') as HTMLElement;
+      textWrap.style.width = '';
+      textWrap.style.height = '';
+    }
+  }
+
   // Lets the user drag the bar between the image and text panels instead of
-  // being stuck with the fixed 36%/42% split — persisted per-orientation so
-  // it stays put across pages and future opens, not just the current view.
+  // being stuck with a fixed split — persisted per-orientation so it stays
+  // put across pages and future opens, not just the current view.
   private setupResizer(): void {
     const el = this.el!;
     const resizer = el.querySelector('.fav-lb-resizer') as HTMLElement;
     const body = el.querySelector('.fav-lb-body') as HTMLElement;
-    const textWrap = el.querySelector('.fav-lb-text-wrap') as HTMLElement;
 
-    const isLandscape = (): boolean => window.matchMedia('(orientation: landscape)').matches;
-    const storageKey = (): string => isLandscape() ? Lightbox.SPLIT_KEY_LANDSCAPE : Lightbox.SPLIT_KEY_PORTRAIT;
-
-    const applyFrac = (frac: number): void => {
-      if (isLandscape()) textWrap.style.width = `${frac * 100}%`;
-      else textWrap.style.height = `${frac * 100}%`;
-    };
-
-    const saved = parseFloat(localStorage.getItem(storageKey()) ?? '');
-    if (!isNaN(saved) && saved > 0 && saved < 1) applyFrac(saved);
+    this.restoreSplit();
 
     resizer.addEventListener('pointerdown', (e: PointerEvent) => {
       resizer.setPointerCapture(e.pointerId);
@@ -334,13 +351,13 @@ export class Lightbox {
     resizer.addEventListener('pointermove', (e: PointerEvent) => {
       if (!resizer.hasPointerCapture(e.pointerId)) return;
       const rect = body.getBoundingClientRect();
-      const landscape = isLandscape();
+      const landscape = Lightbox.isLandscape();
       const raw = landscape
         ? (rect.right - e.clientX) / rect.width
         : (rect.bottom - e.clientY) / rect.height;
       const frac = Math.max(0.15, Math.min(0.8, raw));
-      applyFrac(frac);
-      localStorage.setItem(storageKey(), String(frac));
+      this.applySplitFrac(frac);
+      localStorage.setItem(Lightbox.splitStorageKey(), String(frac));
     });
     const stopDrag = (e: PointerEvent): void => {
       if (resizer.hasPointerCapture(e.pointerId)) resizer.releasePointerCapture(e.pointerId);
@@ -423,10 +440,17 @@ export class Lightbox {
       imgOuterEl.style.display = 'none';
       textWrapEl.style.display = ''; // override any leftover hiddenPanel:'text' from a prior item
       resizerEl.style.display = 'none';
+      // With img-outer removed from the flex row/column, text-wrap would
+      // otherwise stay pinned at whatever split fraction was last set,
+      // leaving the rest of the body as dead space instead of being
+      // centered/full — force it to fill the whole panel instead.
+      textWrapEl.style.width = '100%';
+      textWrapEl.style.height = '100%';
     } else {
       textWrapEl.style.display = this.hiddenPanel === 'text' ? 'none' : '';
       imgOuterEl.style.display = this.hiddenPanel === 'img' ? 'none' : '';
       resizerEl.style.display = this.hiddenPanel ? 'none' : '';
+      this.restoreSplit();
       if (item.kind === 'pdf' && item.page != null) {
         imgEl.style.display = 'none';
         loadingEl.style.display = '';
