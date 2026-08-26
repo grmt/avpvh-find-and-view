@@ -31,6 +31,18 @@ export interface FavConfig {
   placeholder: string;
 }
 
+// Scan pages order by page_number; chat transcripts have no page_number and
+// order chronologically by date instead. Hits missing both sort last, stably.
+export function compareHitOrder(a: MeiliHit, b: MeiliHit): number {
+  if (a.page_number != null || b.page_number != null) {
+    return (a.page_number ?? Infinity) - (b.page_number ?? Infinity);
+  }
+  if (a.date != null || b.date != null) {
+    return (a.date ?? '').localeCompare(b.date ?? '');
+  }
+  return 0;
+}
+
 declare global {
   interface Window {
     favInstances?: FavConfig[];

@@ -1,4 +1,4 @@
-import type { FavConfig, MeiliHit } from './types';
+import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
 import type { Lightbox, LightboxItem } from './lightbox';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 
@@ -137,11 +137,13 @@ export class BrowseMode {
       this.gridEl.appendChild(card);
     });
 
-    // Then leaf collections
+    // Then leaf collections — text-only collections (e.g. chat transcripts)
+    // have no thumb_url to show, so fall back to the same document icon used
+    // elsewhere for text-only items.
     leaves.sort().forEach(colPath => {
       const name = colPath.split('/').at(-1)!;
       const count = cols[colPath] ?? 0;
-      const card = this.makeCard(name, covers[colPath] ?? [], count);
+      const card = this.makeCard(name, covers[colPath] ?? [], count, '📄');
       card.addEventListener('click', () => void this.enter(colPath));
       this.gridEl.appendChild(card);
     });
@@ -254,11 +256,11 @@ export class BrowseMode {
         filter: `collection = "${name}"`,
         limit: PAGE_SIZE,
         offset: this.loadMoreOffset,
-        attributesToRetrieve: ['id', 'url', 'thumb_url', 'title', 'page_number', 'collection'],
+        attributesToRetrieve: ['id', 'url', 'thumb_url', 'title', 'page_number', 'date', 'collection'],
       }),
     }).then(r => r.json()) as { hits: MeiliHit[]; estimatedTotalHits: number };
 
-    const hits = (data.hits ?? []).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+    const hits = (data.hits ?? []).sort(compareHitOrder);
     const total = data.estimatedTotalHits ?? 0;
 
     if (reset) this.gridEl.innerHTML = '';
@@ -272,7 +274,9 @@ export class BrowseMode {
       div.innerHTML =
         `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}">` +
         thumbInner +
-        (hit.page_number != null ? `<span class="fav-page-badge">${hit.page_number}</span>` : '') +
+        (hit.page_number != null
+          ? `<span class="fav-page-badge">${hit.page_number}</span>`
+          : hit.title ? `<span class="fav-page-badge fav-title-badge">${hit.title}</span>` : '') +
         `</a>`;
       this.gridEl.appendChild(div);
     });
@@ -308,17 +312,18 @@ export class BrowseMode {
           q: '',
           filter: `collection = "${collection}"`,
           limit: 5000,
-          attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection', 'text_format', 'has_image'],
+          attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
         }),
       }).then(r => r.json()) as { hits: MeiliHit[] };
 
       const allHits = (data.hits ?? [])
         .filter(h => h.url)
-        .sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+        .sort(compareHitOrder);
 
       const items: LightboxItem[] = allHits.map(h => {
-        // Show only leaf collection name + page number (not full path)
-        const caption = collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : '');
+        // Show only leaf collection name + page number (not full path) —
+        // chat transcripts have no page_number, so fall back to their title.
+        const caption = collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
         const isMd = h.text_format === 'md' || (h.text ? looksLikeMarkdown(h.text) : false);
         const mdHtml = h.text ? renderMarkdown(h.text) : '';
         const plainHtml = h.text ? renderPlain(h.text) : '';

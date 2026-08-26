@@ -2,7 +2,7 @@
 /**
  * Plugin Name:  AVPVH Find and View
  * Description:  Find and view photos, archaeological finds, and scanned documents, powered by Meilisearch.
- * Version:      0.1.40
+ * Version:      0.1.41
  * Author:       grmt
  * License:      MIT
  * Requires PHP: 8.2
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'AVPVH_FAV_VERSION', '0.1.40' );
+define( 'AVPVH_FAV_VERSION', '0.1.41' );
 
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/src/php/class-main.php';
