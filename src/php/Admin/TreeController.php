@@ -3,6 +3,7 @@
 namespace Avpvh\FindAndView\Admin;
 
 use Avpvh\FindAndView\CLI\IndexCommand;
+use Avpvh\FindAndView\Index\XlsxIndexer;
 use Avpvh\FindAndView\Settings;
 use Meilisearch\Contracts\DocumentsQuery;
 
@@ -191,6 +192,12 @@ final class TreeController {
 			);
 
 			foreach ( $it as $file ) {
+				if ( strtolower( $file->getExtension() ) === 'xlsx' ) {
+					foreach ( XlsxIndexer::from_file( $file, $root, $base_url ) as $document ) {
+						$docs[ $document['id'] ] = $document;
+					}
+					continue;
+				}
 				$document = self::build_source_document( $file, $root, $base_url );
 				if ( $document === null ) continue;
 
@@ -224,7 +231,7 @@ final class TreeController {
 			do {
 				$page = $index->getDocuments(
 					( new DocumentsQuery() )
-						->setFilter( [ 'type = scan' ] )
+						->setFilter( [ 'type = scan OR type = spreadsheet' ] )
 						->setFields( [ 'id' ] )
 						->setLimit( 1000 )
 						->setOffset( $offset )
@@ -394,6 +401,7 @@ final class TreeController {
 	}
 
 	private static function is_indexable_source( string $filename, string $relative_directory ): bool {
+		if ( preg_match( '/\.xlsx$/i', $filename ) ) return true;
 		if ( preg_match( '/^page_\d+\.(?:png|jpg|txt|md)$/i', $filename ) ) return true;
 		return self::is_chat_collection( $relative_directory )
 			&& preg_match( '/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}--\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:--\d+)?\.md$/', $filename ) === 1;

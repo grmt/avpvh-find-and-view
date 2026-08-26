@@ -6,7 +6,7 @@ WordPress plugin for searching and browsing photos, archaeological finds, and sc
 
 - Provides the `[avpvh_find_and_view]` shortcode for embedding a search and browse interface on the site.
 - Searches across two main sources:
-  - Media items such as photos and scanned pages
+  - Media items such as photos, scanned pages, and XLSX worksheets
   - WordPress posts and pages indexed into Meilisearch
 - Lets users:
   - Search with a keyword box
@@ -39,6 +39,7 @@ The plugin adds a WordPress settings page with tools for managing the index and 
 
 - WordPress content changes are observed and queued for indexing.
 - Content and media are written into Meilisearch indexes.
+- XLSX files placed in the scans tree are split by worksheet and groups of 100 rows, then indexed as searchable Markdown tables.
 - The frontend queries Meilisearch directly with a public read-only key.
 - Admin actions use the Meilisearch admin key or the master key from `/run/secrets/meilisearch_master_key` when available.
 
