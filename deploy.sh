@@ -33,13 +33,23 @@ npx vite build --config config/vite/search.config.ts
 npx vite build --config config/vite/ecli.config.ts
 npx vite build --config config/vite/tree.config.ts
 
-# 6. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/
+# 6. Build a production-only vendor/ (no phpunit/phpstan/etc — the server
+# has no composer binary to install these itself, and dev tooling has no
+# business shipping to production anyway), then restore the full dev
+# vendor/ afterwards so this doesn't disturb the local dev environment.
+composer install --no-dev --optimize-autoloader
+trap 'composer install' EXIT
+
+# 7. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/,
+# vendor/ mirrored with --delete so a dependency dropped from composer.json
+# actually disappears server-side too, not just stops being referenced.
 for site in site1 site2 site3; do
 	dest="user@server.example:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
 
 	rsync -av --omit-dir-times avpvh-find-and-view.php "$dest"
 	rsync -av --omit-dir-times dist/ "${dest}dist/"
 	rsync -av --omit-dir-times src/php/ "${dest}src/php/"
+	rsync -av --delete --omit-dir-times vendor/ "${dest}vendor/"
 done
 
 echo "Done -- ${new_version} deployed."
