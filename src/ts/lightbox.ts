@@ -47,7 +47,14 @@ export class Lightbox {
   private txtZoom = 1;
   private onClose: (() => void) | null = null;
   private pdfDocs = new Map<string, pdfjsLib.PDFDocumentLoadingTask>();
-  private currentBlobUrl: string | null = null;
+  // Rendered PDF pages are expensive (canvas render at 2x scale + PNG encode),
+  // so cache the blob URL per (doc, page) — revisiting a page you already
+  // viewed this session should be instant, not a full re-render. Bounded so
+  // paging through a long document doesn't grow memory without limit; the
+  // highlight terms aren't part of the key since they're drawn as a separate
+  // overlay layer, not baked into the rendered image (see findHighlightRects).
+  private pageImageCache = new Map<string, string>();
+  private static readonly PAGE_CACHE_LIMIT = 24;
   private showToken = 0;
   private highlightRects: HighlightRect[] = [];
   private hiddenPanel: 'img' | 'text' | null = null;
@@ -400,8 +407,8 @@ export class Lightbox {
     this.el = null;
     document.removeEventListener('keydown', this.keyHandler);
     document.removeEventListener('fullscreenchange', this.fullscreenHandler);
-    if (this.currentBlobUrl) URL.revokeObjectURL(this.currentBlobUrl);
-    this.currentBlobUrl = null;
+    this.pageImageCache.forEach(url => URL.revokeObjectURL(url));
+    this.pageImageCache.clear();
     this.pdfDocs.forEach(task => { void task.destroy().catch(() => undefined); });
     this.pdfDocs.clear();
     this.onClose?.();
@@ -522,8 +529,6 @@ export class Lightbox {
 
   private setImage(src: string): void {
     const imgEl = this.el!.querySelector('.fav-lb-img') as HTMLImageElement;
-    if (this.currentBlobUrl) URL.revokeObjectURL(this.currentBlobUrl);
-    this.currentBlobUrl = src.startsWith('blob:') ? src : null;
     imgEl.src = src;
   }
 
@@ -539,22 +544,43 @@ export class Lightbox {
       const doc = await task.promise;
       const page = await doc.getPage(pageNum);
       const viewport = page.getViewport({ scale: 2 });
+
+      // Rects are cheap (a text-content scan) and depend on the current
+      // search, so always recompute them — but reuse the rendered image
+      // itself when this exact page was already rendered this session.
+      const rects = await this.findHighlightRects(page, viewport, terms);
+      const cacheKey = `${url}#${pageNum}`;
+      const cached = this.pageImageCache.get(cacheKey);
+      if (cached) {
+        this.pageImageCache.delete(cacheKey); // bump recency for the LRU cap
+        this.pageImageCache.set(cacheKey, cached);
+        return { blobUrl: cached, rects };
+      }
+
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d')!;
       await page.render({ canvasContext: ctx, viewport }).promise;
 
-      const rects = await this.findHighlightRects(page, viewport, terms);
-
       const blobUrl = await new Promise<string | null>(resolve => {
         canvas.toBlob(blob => resolve(blob ? URL.createObjectURL(blob) : null), 'image/png');
       });
+      if (blobUrl) this.cachePageImage(cacheKey, blobUrl);
       return { blobUrl, rects };
     } catch (err) {
       console.error('[avpvh-find-and-view] PDF page render failed:', err);
       return { blobUrl: null, rects: [] };
     }
+  }
+
+  private cachePageImage(key: string, blobUrl: string): void {
+    this.pageImageCache.set(key, blobUrl);
+    if (this.pageImageCache.size <= Lightbox.PAGE_CACHE_LIMIT) return;
+    const oldestKey = this.pageImageCache.keys().next().value;
+    if (oldestKey === undefined) return;
+    URL.revokeObjectURL(this.pageImageCache.get(oldestKey)!);
+    this.pageImageCache.delete(oldestKey);
   }
 
   // Highlights matched search terms directly on the rendered PDF page by
