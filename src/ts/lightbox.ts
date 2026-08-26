@@ -308,6 +308,43 @@ export class Lightbox {
     imgWrapEl.addEventListener('touchend', touchEnd, { passive: true });
     imgWrapEl.addEventListener('touchcancel', () => { touchMode = 'none'; }, { passive: true });
 
+    // Touch pans for free via native scroll on the now-scrollable wrap (see
+    // above), but a mouse drag doesn't turn into a scroll on its own — click
+    // and drag has to be wired up explicitly. Only active while zoomed in;
+    // pointerType is checked so this doesn't double-handle touch input that
+    // the handlers above already own.
+    let dragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let dragScrollLeft = 0;
+    let dragScrollTop = 0;
+    imgWrapEl.addEventListener('pointerdown', (e: Event) => {
+      const pe = e as PointerEvent;
+      if (pe.pointerType !== 'mouse' || this.imgZoom <= 1.01) return;
+      dragging = true;
+      dragStartX = pe.clientX;
+      dragStartY = pe.clientY;
+      dragScrollLeft = imgWrapEl.scrollLeft;
+      dragScrollTop = imgWrapEl.scrollTop;
+      imgWrapEl.setPointerCapture(pe.pointerId);
+      imgWrapEl.classList.add('fav-lb-panning');
+    });
+    imgWrapEl.addEventListener('pointermove', (e: Event) => {
+      if (!dragging) return;
+      const pe = e as PointerEvent;
+      imgWrapEl.scrollLeft = dragScrollLeft - (pe.clientX - dragStartX);
+      imgWrapEl.scrollTop = dragScrollTop - (pe.clientY - dragStartY);
+    });
+    const stopDragPan = (e: Event): void => {
+      if (!dragging) return;
+      dragging = false;
+      imgWrapEl.classList.remove('fav-lb-panning');
+      const pe = e as PointerEvent;
+      if (imgWrapEl.hasPointerCapture(pe.pointerId)) imgWrapEl.releasePointerCapture(pe.pointerId);
+    };
+    imgWrapEl.addEventListener('pointerup', stopDragPan);
+    imgWrapEl.addEventListener('pointercancel', stopDragPan);
+
     this.setupResizer();
 
     document.addEventListener('keydown', this.keyHandler);
@@ -651,6 +688,9 @@ export class Lightbox {
     const scale = `scale(${this.imgZoom})`;
     (this.el!.querySelector('.fav-lb-img') as HTMLElement).style.transform = scale;
     (this.el!.querySelector('.fav-lb-highlights') as HTMLElement).style.transform = scale;
+    // Cursor hints that the image is now draggable, matching the drag-to-pan
+    // handlers set up in open() — only meaningful once zoomed in.
+    this.el!.querySelector('.fav-lb-img-wrap')!.classList.toggle('fav-lb-zoomed', this.imgZoom > 1.01);
   }
 
   private setTxtZoom(z: number): void {
