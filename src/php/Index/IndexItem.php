@@ -7,7 +7,7 @@ use Avpvh\FindAndView\Storage\StorageFile;
 final class IndexItem {
 	public function __construct(
 		public readonly string       $id,
-		public readonly string       $type,        // 'post' | 'page' | 'photo' | 'find' | 'scan'
+		public readonly string       $type,        // 'post' | 'page' | 'photo' | 'find' | 'scan' | 'spreadsheet'
 		public readonly string       $title,
 		public readonly string       $text,        // OCR, EXIF description, post content
 		public readonly string       $collection,  // album, productie, post_type label

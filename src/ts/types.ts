@@ -1,6 +1,6 @@
 export interface MeiliHit {
   id: string;
-  type: 'photo' | 'find' | 'scan' | 'post' | 'page';
+  type: 'photo' | 'find' | 'scan' | 'spreadsheet' | 'post' | 'page';
   title: string;
   text: string;
   collection: string;

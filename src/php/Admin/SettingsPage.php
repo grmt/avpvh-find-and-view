@@ -215,7 +215,7 @@ final class SettingsPage {
 					<?php esc_html_e( 'Hernoem index…', 'avpvh-find-and-view' ); ?>
 				</button>
 				<button id="fav-tree-reindex" class="button">
-					<?php esc_html_e( 'Herindex scans (lokale txt)', 'avpvh-find-and-view' ); ?>
+					<?php esc_html_e( 'Herindex scans en spreadsheets', 'avpvh-find-and-view' ); ?>
 				</button>
 				<button id="fav-tree-reindex-content" class="button">
 					<?php esc_html_e( 'Herindex pagina\'s', 'avpvh-find-and-view' ); ?>
