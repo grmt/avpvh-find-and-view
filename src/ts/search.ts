@@ -5,7 +5,7 @@ import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { Lightbox, type LightboxItem } from './lightbox';
 import { BrowseMode } from './browse';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
-import type { FavConfig, MeiliHit } from './types';
+import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
 
 function parseContains(q: string): string {
   return q
@@ -700,7 +700,7 @@ function initInstance(cfg: FavConfig): void {
             q: query,
             filter: `collection = "${collection}"`,
             limit: 5000,
-            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection', 'text_format', 'has_image'],
+            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
             ...(highlight ? { attributesToHighlight: ['text'], highlightPreTag: '<em>', highlightPostTag: '</em>' } : {}),
           }),
         }).then(r => r.json());
@@ -711,7 +711,7 @@ function initInstance(cfg: FavConfig): void {
       Promise.all([fetchHits('', false), q ? fetchHits(q, true) : Promise.resolve({ hits: [] })])
         .then(([allData, matchData]) => {
           const allHits = (allData.hits ?? []).filter(h => h.url);
-          allHits.sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+          allHits.sort(compareHitOrder);
           if (!allHits.length) { lb.close(); return; }
 
           const matchMap = new Map((matchData.hits ?? []).map(h => [h.id, h]));

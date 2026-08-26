@@ -123,7 +123,7 @@ final class TreeController {
 			$full = $dir . '/' . $entry;
 			if ( is_dir( $full ) ) {
 				$children[] = $this->build_tree( $full, $root );
-			} elseif ( preg_match( '/^page_\d+\.(png|jpg|txt|md)$/i', $entry ) ) {
+			} elseif ( self::is_indexable_source( $entry, $rel ) ) {
 				$is_leaf = true;
 			}
 		}
@@ -191,29 +191,11 @@ final class TreeController {
 			);
 
 			foreach ( $it as $file ) {
+				$document = self::build_source_document( $file, $root, $base_url );
+				if ( $document === null ) continue;
+
+				$id      = $document['id'];
 				$src_ext = $file->getExtension();
-				if ( $src_ext !== 'txt' && $src_ext !== 'md' ) continue;
-				if ( ! preg_match( '/^page_(\d+)\.(?:txt|md)$/i', $file->getFilename(), $m ) ) continue;
-
-				$text = trim( (string) file_get_contents( $file->getPathname() ) );
-				if ( $text === '' ) continue;
-
-				$dir        = $file->getPath();
-				$collection = ltrim( str_replace( $root, '', $dir ), '/' );
-				$parts      = $collection !== '' ? explode( '/', $collection ) : [];
-				$tags       = array_map(
-					static fn( $i ) => implode( '/', array_slice( $parts, 0, $i + 1 ) ),
-					array_keys( $parts )
-				);
-				$label     = $file->getBasename( '.' . $src_ext );
-				$img_ext   = self::image_extension( $dir, $label );
-				$has_image = $img_ext !== null;
-				// Without a scan image, point url at the source .md/.txt itself
-				// (a real, existing file) rather than a guessed image path that
-				// would just 404 — the frontend hides the image panel entirely
-				// when has_image is false.
-				$asset = $has_image ? $label . '.' . $img_ext : $file->getFilename();
-				$id    = self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label );
 
 				// A page_N.txt and page_N.md in the same folder share this id.
 				// Prefer the .md — it's the deliberately-authored transcript —
@@ -221,20 +203,7 @@ final class TreeController {
 				// iterator happens to visit last.
 				if ( isset( $docs[ $id ] ) && $docs[ $id ]['text_format'] === 'md' && $src_ext !== 'md' ) continue;
 
-				$docs[ $id ] = [
-					'id'          => $id,
-					'type'        => 'scan',
-					'title'       => $collection,
-					'collection'  => $collection,
-					'page_number' => (int) $m[1],
-					'text'        => $text,
-					'text_format' => $src_ext === 'md' ? 'md' : 'text',
-					'has_image'   => $has_image,
-					'url'         => $base_url . '/' . $collection . '/' . $asset,
-					'thumb_url'   => $has_image ? $base_url . '/' . $collection . '/' . $asset : null,
-					'tags'        => $tags,
-					'date'        => null,
-				];
+				$docs[ $id ] = $document;
 			}
 
 			$docs = array_values( $docs );
@@ -422,6 +391,66 @@ final class TreeController {
 	 */
 	private static function sanitize_id( string $raw ): string {
 		return preg_replace( '/[^A-Za-z0-9_-]/', '_', $raw ) ?? $raw;
+	}
+
+	private static function is_indexable_source( string $filename, string $relative_directory ): bool {
+		if ( preg_match( '/^page_\d+\.(?:png|jpg|txt|md)$/i', $filename ) ) return true;
+		return self::is_chat_collection( $relative_directory )
+			&& preg_match( '/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}--\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:--\d+)?\.md$/', $filename ) === 1;
+	}
+
+	// A bare str_starts_with( $collection, 'chats' ) would also match an
+	// unrelated folder like "chats-archive" — require "chats" as its own
+	// path segment (either the collection itself, or its first component).
+	private static function is_chat_collection( string $collection ): bool {
+		$dir = trim( $collection, '/' );
+		return $dir === 'chats' || str_starts_with( $dir, 'chats/' );
+	}
+
+	private static function collection_tags( string $collection ): array {
+		$parts = $collection !== '' ? explode( '/', $collection ) : [];
+		return array_map(
+			static fn( int $index ): string => implode( '/', array_slice( $parts, 0, $index + 1 ) ),
+			array_keys( $parts )
+		);
+	}
+
+	private static function source_date( string $label, bool $is_chat ): ?string {
+		if ( ! $is_chat || preg_match( '/^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/', $label, $matches ) !== 1 ) return null;
+		return $matches[1] . 'T' . $matches[2] . ':' . $matches[3] . ':' . $matches[4];
+	}
+
+	private static function build_source_document( \SplFileInfo $file, string $root, string $base_url ): ?array {
+		$src_ext   = strtolower( $file->getExtension() );
+		$dir       = $file->getPath();
+		$collection = ltrim( str_replace( $root, '', $dir ), '/' );
+		if ( ! self::is_indexable_source( $file->getFilename(), $collection ) || ( $src_ext !== 'txt' && $src_ext !== 'md' ) ) return null;
+
+		$text = trim( (string) file_get_contents( $file->getPathname() ) );
+		if ( $text === '' ) return null;
+
+		$label      = $file->getBasename( '.' . $src_ext );
+		$is_chat    = self::is_chat_collection( $collection );
+		$page       = preg_match( '/^page_(\d+)$/i', $label, $matches ) === 1 ? (int) $matches[1] : null;
+		$img_ext    = $is_chat ? null : self::image_extension( $dir, $label );
+		$has_image  = $img_ext !== null;
+		$asset      = $has_image ? $label . '.' . $img_ext : $file->getFilename();
+		$title      = $is_chat ? basename( $collection ) : $collection;
+
+		return [
+			'id'          => self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label ),
+			'type'        => 'scan',
+			'title'       => $title,
+			'collection'  => $collection,
+			'page_number' => $page,
+			'text'        => $text,
+			'text_format' => $src_ext === 'md' ? 'md' : 'text',
+			'has_image'   => $has_image,
+			'url'         => $base_url . '/' . $collection . '/' . $asset,
+			'thumb_url'   => $has_image ? $base_url . '/' . $collection . '/' . $asset : null,
+			'tags'        => self::collection_tags( $collection ),
+			'date'        => self::source_date( $label, $is_chat ),
+		];
 	}
 
 	/**
