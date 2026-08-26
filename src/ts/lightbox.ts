@@ -44,6 +44,13 @@ export class Lightbox {
   private items: LightboxItem[] = [];
   private idx = 0;
   private imgZoom = 1;
+  // Pan offset in screen pixels, applied outside the scale in the transform
+  // (translate(panX,panY) scale(imgZoom)) so drag deltas map 1:1 without
+  // dividing by zoom. Native overflow-scroll doesn't pick up a transform's
+  // visual overflow here, so panning is tracked explicitly instead of via
+  // scrollLeft/scrollTop.
+  private panX = 0;
+  private panY = 0;
   private txtZoom = 1;
   private onClose: (() => void) | null = null;
   private pdfDocs = new Map<string, pdfjsLib.PDFDocumentLoadingTask>();
@@ -97,13 +104,10 @@ export class Lightbox {
       // that's what you actually want once you can no longer see the
       // whole page — otherwise there'd be no keyboard way to pan at all.
       e.preventDefault();
-      const wrap = this.el.querySelector('.fav-lb-img-wrap') as HTMLElement;
       const step = 80;
-      wrap.scrollBy({
-        left: e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0,
-        top: e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0,
-        behavior: 'smooth',
-      });
+      this.panX -= e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+      this.panY -= e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+      this.applyImgTransform();
       return;
     }
     if (e.key === 'ArrowLeft') this.show(this.idx - 1);
@@ -120,6 +124,8 @@ export class Lightbox {
     this.close();
     this.items = items;
     this.imgZoom = 1;
+    this.panX = 0;
+    this.panY = 0;
     this.txtZoom = 1;
     this.hiddenPanel = null;
     this.onClose = onClose ?? null;
@@ -214,9 +220,9 @@ export class Lightbox {
     document.addEventListener('fullscreenchange', this.fullscreenHandler);
 
     const izBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-iz .fav-lb-zbtn'));
-    izBtns[0]?.addEventListener('click', () => this.setImgZoom(this.imgZoom / 1.3));
-    izBtns[1]?.addEventListener('click', () => this.setImgZoom(1));
-    izBtns[2]?.addEventListener('click', () => this.setImgZoom(this.imgZoom * 1.3));
+    izBtns[0]?.addEventListener('click', () => this.zoomTowardCenter(this.imgZoom / 1.3));
+    izBtns[1]?.addEventListener('click', () => { this.panX = 0; this.panY = 0; this.setImgZoom(1); });
+    izBtns[2]?.addEventListener('click', () => this.zoomTowardCenter(this.imgZoom * 1.3));
 
     const tzBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-text-bar .fav-lb-zbtn:not(.fav-lb-format-toggle)'));
     tzBtns[0]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom / 1.2));
@@ -241,7 +247,7 @@ export class Lightbox {
       const we = e as WheelEvent;
       if (!we.ctrlKey) return;
       we.preventDefault();
-      this.setImgZoom(this.imgZoom * (we.deltaY < 0 ? 1.1 : 0.9));
+      this.zoomAt(this.imgZoom * (we.deltaY < 0 ? 1.1 : 0.9), we.clientX, we.clientY);
     }, { passive: false });
 
     this.el.querySelector('.fav-lb-text-content')!.addEventListener('wheel', (e: Event) => {
@@ -253,11 +259,16 @@ export class Lightbox {
 
     // Touch gestures on the image, mirroring the keyboard scheme: swipe
     // left/right pages, swipe up/down jumps to the next/previous search
-    // result, and a two-finger pinch zooms — all only while not already
-    // zoomed in, where a single-finger drag instead pans (native scroll on
-    // the now-scrollable .fav-lb-img-wrap).
+    // result, and a two-finger pinch zooms (centered on the pinch midpoint)
+    // — all only while not already zoomed in, where a single-finger drag
+    // instead pans. Panning is tracked explicitly (panX/panY), not via
+    // native scroll — a transform-scaled image doesn't register as
+    // overflowing .fav-lb-img-wrap, so scrollLeft/scrollTop never had
+    // anything to scroll to.
     let touchStartX = 0;
     let touchStartY = 0;
+    let panStartX = 0;
+    let panStartY = 0;
     let touchMode: 'none' | 'swipe' | 'pinch' = 'none';
     let pinchStartDist = 0;
     let pinchStartZoom = 1;
@@ -274,6 +285,8 @@ export class Lightbox {
         touchMode = 'swipe';
         touchStartX = te.touches[0]!.clientX;
         touchStartY = te.touches[0]!.clientY;
+        panStartX = this.panX;
+        panStartY = this.panY;
       } else {
         touchMode = 'none';
       }
@@ -281,13 +294,27 @@ export class Lightbox {
 
     imgWrapEl.addEventListener('touchmove', (e: Event) => {
       const te = e as TouchEvent;
-      if (touchMode !== 'pinch' || te.touches.length !== 2 || pinchStartDist <= 0) return;
-      e.preventDefault(); // suppress the browser's own page-pinch-zoom
-      const ratio = touchDist(te.touches[0]!, te.touches[1]!) / pinchStartDist;
-      this.setImgZoom(pinchStartZoom * ratio);
+      if (touchMode === 'pinch' && te.touches.length === 2 && pinchStartDist > 0) {
+        e.preventDefault(); // suppress the browser's own page-pinch-zoom
+        const t0 = te.touches[0]!;
+        const t1 = te.touches[1]!;
+        const ratio = touchDist(t0, t1) / pinchStartDist;
+        this.zoomAt(pinchStartZoom * ratio, (t0.clientX + t1.clientX) / 2, (t0.clientY + t1.clientY) / 2);
+        return;
+      }
+      if (touchMode === 'swipe' && this.imgZoom > 1.01) {
+        e.preventDefault();
+        const touch = te.touches[0];
+        if (!touch) return;
+        imgWrapEl.classList.add('fav-lb-panning');
+        this.panX = panStartX + (touch.clientX - touchStartX);
+        this.panY = panStartY + (touch.clientY - touchStartY);
+        this.applyImgTransform();
+      }
     }, { passive: false });
 
     const touchEnd = (e: Event): void => {
+      imgWrapEl.classList.remove('fav-lb-panning');
       if (touchMode === 'pinch') {
         if ((e as TouchEvent).touches.length < 2) touchMode = 'none';
         return;
@@ -306,34 +333,33 @@ export class Lightbox {
       }
     };
     imgWrapEl.addEventListener('touchend', touchEnd, { passive: true });
-    imgWrapEl.addEventListener('touchcancel', () => { touchMode = 'none'; }, { passive: true });
+    imgWrapEl.addEventListener('touchcancel', () => { touchMode = 'none'; imgWrapEl.classList.remove('fav-lb-panning'); }, { passive: true });
 
-    // Touch pans for free via native scroll on the now-scrollable wrap (see
-    // above), but a mouse drag doesn't turn into a scroll on its own — click
-    // and drag has to be wired up explicitly. Only active while zoomed in;
-    // pointerType is checked so this doesn't double-handle touch input that
-    // the handlers above already own.
+    // Mouse drag-to-pan, active only while zoomed in. pointerType is checked
+    // so this doesn't double-handle touch input, which the handlers above
+    // already own.
     let dragging = false;
     let dragStartX = 0;
     let dragStartY = 0;
-    let dragScrollLeft = 0;
-    let dragScrollTop = 0;
+    let dragPanStartX = 0;
+    let dragPanStartY = 0;
     imgWrapEl.addEventListener('pointerdown', (e: Event) => {
       const pe = e as PointerEvent;
       if (pe.pointerType !== 'mouse' || this.imgZoom <= 1.01) return;
       dragging = true;
       dragStartX = pe.clientX;
       dragStartY = pe.clientY;
-      dragScrollLeft = imgWrapEl.scrollLeft;
-      dragScrollTop = imgWrapEl.scrollTop;
+      dragPanStartX = this.panX;
+      dragPanStartY = this.panY;
       imgWrapEl.setPointerCapture(pe.pointerId);
       imgWrapEl.classList.add('fav-lb-panning');
     });
     imgWrapEl.addEventListener('pointermove', (e: Event) => {
       if (!dragging) return;
       const pe = e as PointerEvent;
-      imgWrapEl.scrollLeft = dragScrollLeft - (pe.clientX - dragStartX);
-      imgWrapEl.scrollTop = dragScrollTop - (pe.clientY - dragStartY);
+      this.panX = dragPanStartX + (pe.clientX - dragStartX);
+      this.panY = dragPanStartY + (pe.clientY - dragStartY);
+      this.applyImgTransform();
     });
     const stopDragPan = (e: Event): void => {
       if (!dragging) return;
@@ -685,12 +711,40 @@ export class Lightbox {
 
   private setImgZoom(z: number): void {
     this.imgZoom = Math.max(0.2, Math.min(8, z));
-    const scale = `scale(${this.imgZoom})`;
-    (this.el!.querySelector('.fav-lb-img') as HTMLElement).style.transform = scale;
-    (this.el!.querySelector('.fav-lb-highlights') as HTMLElement).style.transform = scale;
+    this.applyImgTransform();
     // Cursor hints that the image is now draggable, matching the drag-to-pan
     // handlers set up in open() — only meaningful once zoomed in.
     this.el!.querySelector('.fav-lb-img-wrap')!.classList.toggle('fav-lb-zoomed', this.imgZoom > 1.01);
+  }
+
+  private applyImgTransform(): void {
+    const t = `translate(${this.panX}px, ${this.panY}px) scale(${this.imgZoom})`;
+    (this.el!.querySelector('.fav-lb-img') as HTMLElement).style.transform = t;
+    (this.el!.querySelector('.fav-lb-highlights') as HTMLElement).style.transform = t;
+  }
+
+  // Zooms to newZoom while keeping whatever point is under (clientX, clientY)
+  // fixed on screen — the standard "zoom to cursor" behavior for wheel/pinch
+  // zoom. transform-origin is the element's own center, so the math is done
+  // relative to .fav-lb-img-wrap's center (the image is flex-centered there,
+  // and that position doesn't move when the image's own transform changes).
+  private zoomAt(newZoom: number, clientX: number, clientY: number): void {
+    const clamped = Math.max(0.2, Math.min(8, newZoom));
+    const rect = (this.el!.querySelector('.fav-lb-img-wrap') as HTMLElement).getBoundingClientRect();
+    const ax = clientX - (rect.left + rect.width / 2);
+    const ay = clientY - (rect.top + rect.height / 2);
+    const k = clamped / this.imgZoom;
+    this.panX = ax + k * (this.panX - ax);
+    this.panY = ay + k * (this.panY - ay);
+    this.setImgZoom(clamped);
+  }
+
+  // Button-triggered zoom has no cursor position to anchor to — zoom toward
+  // the current view's own center instead, which just scales the existing
+  // pan proportionally and keeps whatever's centered, centered.
+  private zoomTowardCenter(newZoom: number): void {
+    const rect = (this.el!.querySelector('.fav-lb-img-wrap') as HTMLElement).getBoundingClientRect();
+    this.zoomAt(newZoom, rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
   private setTxtZoom(z: number): void {
