@@ -301,6 +301,24 @@ function initInstance(cfg: FavConfig): void {
     }
   }
 
+  // A folder that only wraps a single child is pointless to browse into —
+  // skip straight through any such chain to the first node that's an
+  // actual leaf or actually branches, so its tile can show real content
+  // instead of a one-item sublist. Returns the extra path segments skipped,
+  // so a click can jump directly past them.
+  function collapseSingleChild(node: PgNode): { node: PgNode; extraSlugs: string[] } {
+    let current = node;
+    let entries = Object.entries(current.children);
+    const extraSlugs: string[] = [];
+    while (entries.length === 1) {
+      const [slug, child] = entries[0]!;
+      extraSlugs.push(slug);
+      current = child;
+      entries = Object.entries(current.children);
+    }
+    return { node: current, extraSlugs };
+  }
+
   // Subfolder name preview inside a folder tile, mirroring avpvh-gallery's
   // directory sublist (up to 7 names, last one truncated to signal overflow).
   function renderDirSublist(children: PgNode[]): string {
@@ -332,16 +350,17 @@ function initInstance(cfg: FavConfig): void {
       return;
     }
     for (const [slug, nd] of entries) {
-      const children = Object.values(nd.children).sort((a, b) => a.title.localeCompare(b.title, 'nl'));
+      const { node: effective, extraSlugs } = collapseSingleChild(nd);
+      const children = Object.values(effective.children).sort((a, b) => a.title.localeCompare(b.title, 'nl'));
       const hasChildren = children.length > 0;
       const card = document.createElement(hasChildren ? 'div' : 'a') as HTMLElement;
       card.className = 'fav-col-card';
-      if (!hasChildren) (card as HTMLAnchorElement).href = nd.url;
+      if (!hasChildren) (card as HTMLAnchorElement).href = effective.url;
       const thumbHtml = hasChildren ? renderDirSublist(children) : '<span class="fav-col-icon">📄</span>';
       card.innerHTML =
         `<div class="fav-col-thumb${hasChildren ? ' fav-col-no-thumb' : ''}">${thumbHtml}</div>` +
-        `<div class="fav-col-label">${nd.title}</div>`;
-      if (hasChildren) card.addEventListener('click', () => renderPageBrowseLevel([...path, slug]));
+        `<div class="fav-col-label">${effective.title}</div>`;
+      if (hasChildren) card.addEventListener('click', () => renderPageBrowseLevel([...path, slug, ...extraSlugs]));
       pageBrowseGrid.appendChild(card);
     }
   }
