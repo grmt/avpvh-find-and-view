@@ -301,6 +301,19 @@ function initInstance(cfg: FavConfig): void {
     }
   }
 
+  // Subfolder name preview inside a folder tile, mirroring avpvh-gallery's
+  // directory sublist (up to 7 names, last one truncated to signal overflow).
+  function renderDirSublist(children: PgNode[]): string {
+    const shown = children.slice(0, 7);
+    const hasTruncated = shown.length === 7 && children.length > 7;
+    const items = shown.map((child, i) => {
+      const isTruncated = hasTruncated && i === 6;
+      const label = isTruncated ? child.title.slice(0, 5) + '…' : child.title;
+      return `<div class="fav-dir-sublist-item${isTruncated ? ' fav-dir-sublist-more' : ''}">${label}</div>`;
+    }).join('');
+    return `<div class="fav-dir-sublist">${items}</div>`;
+  }
+
   function renderPageBrowseLevel(path: string[]): void {
     if (!pageBrowseGrid || !pageTreeData) return;
     pageBrowsePath = path;
@@ -319,12 +332,14 @@ function initInstance(cfg: FavConfig): void {
       return;
     }
     for (const [slug, nd] of entries) {
-      const hasChildren = Object.keys(nd.children).length > 0;
+      const children = Object.values(nd.children).sort((a, b) => a.title.localeCompare(b.title, 'nl'));
+      const hasChildren = children.length > 0;
       const card = document.createElement(hasChildren ? 'div' : 'a') as HTMLElement;
       card.className = 'fav-col-card';
       if (!hasChildren) (card as HTMLAnchorElement).href = nd.url;
+      const thumbHtml = hasChildren ? renderDirSublist(children) : '<span class="fav-col-icon">📄</span>';
       card.innerHTML =
-        `<div class="fav-col-thumb"><span class="fav-col-icon">${hasChildren ? '📁' : '📄'}</span></div>` +
+        `<div class="fav-col-thumb${hasChildren ? ' fav-col-no-thumb' : ''}">${thumbHtml}</div>` +
         `<div class="fav-col-label">${nd.title}</div>`;
       if (hasChildren) card.addEventListener('click', () => renderPageBrowseLevel([...path, slug]));
       pageBrowseGrid.appendChild(card);

@@ -74,6 +74,12 @@
 .fav-col-label { font-size: .85em; font-weight: 600; padding: .5em .7em .1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fav-col-count { font-size: .75em; color: #888; padding: 0 .7em .5em; }
 
+/* Folder tile with no cover thumbnail: list child names instead of a bare icon */
+.fav-col-thumb.fav-col-no-thumb { background: #a8b8c4; align-items: flex-start; justify-content: flex-start; padding: .6em .7em; }
+.fav-dir-sublist { width: 100%; height: 100%; overflow: hidden; display: flex; flex-direction: column; gap: 2px; }
+.fav-dir-sublist-item { color: #1a2c3a; font-size: .8em; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fav-dir-sublist-more { color: #3a5060; }
+
 /* Collection detail photo grid */
 .fav-item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .6em; }
 .fav-browse-item { position: relative; aspect-ratio: 1; background: #f0f0f0; border-radius: 4px; overflow: hidden; }
