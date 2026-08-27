@@ -403,8 +403,11 @@ final class TreeController {
 	private static function is_indexable_source( string $filename, string $relative_directory ): bool {
 		if ( preg_match( '/\.xlsx$/i', $filename ) ) return true;
 		if ( preg_match( '/^page_\d+\.(?:png|jpg|txt|md)$/i', $filename ) ) return true;
+		// A long conversation gets split across several files by the chat
+		// exporter, suffixed "--part-001-of-002" etc. — not to be confused
+		// with the page_N.* scans' single trailing "--N" counter.
 		return self::is_chat_collection( $relative_directory )
-			&& preg_match( '/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}--\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:--\d+)?\.md$/', $filename ) === 1;
+			&& preg_match( '/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}--\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:--part-\d+-of-\d+)?\.md$/', $filename ) === 1;
 	}
 
 	// A bare str_starts_with( $collection, 'chats' ) would also match an
@@ -443,7 +446,13 @@ final class TreeController {
 		$img_ext    = $is_chat ? null : self::image_extension( $dir, $label );
 		$has_image  = $img_ext !== null;
 		$asset      = $has_image ? $label . '.' . $img_ext : $file->getFilename();
-		$title      = $is_chat ? basename( $collection ) : $collection;
+		// A long chat gets split into several same-titled files ("--part-001-
+		// of-002" etc.) — without a suffix they'd be indistinguishable in
+		// search results and the lightbox caption/title.
+		$title = $is_chat ? basename( $collection ) : $collection;
+		if ( $is_chat && preg_match( '/--part-(\d+)-of-(\d+)$/', $label, $part_matches ) === 1 ) {
+			$title .= sprintf( ' (deel %d/%d)', (int) $part_matches[1], (int) $part_matches[2] );
+		}
 
 		return [
 			'id'          => self::sanitize_id( str_replace( '/', '__', $collection ) . '__' . $label ),
