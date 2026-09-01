@@ -190,11 +190,12 @@ function initInstance(cfg: FavConfig): void {
 
   // Clicking a tree checkbox normally just toggles it (check/uncheck this
   // branch, cascading to its own descendants, same as native behavior).
-  // Every 3rd click on the *same* checkbox instead solos that branch:
-  // this node and its descendants end up checked, and everything else
-  // within the same top-level tree (Media / Pagina's / Berichten) gets
-  // unchecked — a quick way to isolate one branch without unchecking
-  // every sibling by hand. The cycle then repeats (toggle, toggle, solo, ...).
+  // A 4-click cycle on the *same* checkbox: click 1/2 are the normal
+  // toggle; click 3 solos the branch (it and its descendants checked,
+  // everything else within the same top-level tree unchecked); click 4
+  // restores every checkbox in that tree to exactly what it was before
+  // click 1 — undoing the whole cycle rather than just toggling again.
+  // Click 5 then starts a fresh cycle from that restored state.
   function attachCycleCheckbox(
     cb: HTMLInputElement,
     li: HTMLElement,
@@ -203,11 +204,22 @@ function initInstance(cfg: FavConfig): void {
     onFilterChange: () => void,
     updateParents: (el: HTMLElement) => void,
   ): void {
-    let clickPhase = 0;
+    let phase = 0;
+    let snapshot: Map<HTMLInputElement, boolean> | null = null;
     cb.addEventListener('change', () => {
-      clickPhase = (clickPhase + 1) % 3;
-      const root = clickPhase === 0 ? scopeRoot() : null;
-      if (root) {
+      const root = scopeRoot();
+      if (phase === 0 && root) {
+        // Starting a new cycle: remember every checkbox in scope so click 4
+        // can restore it. The native click already toggled `cb` itself, so
+        // its pre-click value is the opposite of its current one.
+        snapshot = new Map(
+          [...root.querySelectorAll<HTMLInputElement>('input[type=checkbox]')]
+            .map(c => [c, c === cb ? !c.checked : c.checked]),
+        );
+      }
+      phase = (phase + 1) % 4;
+
+      if (phase === 3 && root) {
         // Solo: this branch checked, everything else in the tree unchecked.
         const mine = new Set<HTMLInputElement>([...li.querySelectorAll<HTMLInputElement>('input[type=checkbox]')]);
         mine.add(cb);
@@ -216,6 +228,11 @@ function initInstance(cfg: FavConfig): void {
           c.indeterminate = false;
         });
         root.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(leaf => updateParents(leaf));
+      } else if (phase === 0 && root && snapshot) {
+        // Restore: undo the whole cycle.
+        snapshot.forEach((checked, c) => { c.checked = checked; c.indeterminate = false; });
+        root.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(leaf => updateParents(leaf));
+        snapshot = null;
       } else {
         if (hasChildren) {
           li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
@@ -229,7 +246,12 @@ function initInstance(cfg: FavConfig): void {
     });
   }
 
-  function makeTopFolder(rootUl: HTMLElement, label: string, onToggle: () => void): { li: HTMLLIElement; ul: HTMLUListElement } {
+  function makeTopFolder(
+    rootUl: HTMLElement,
+    label: string,
+    onToggle: () => void,
+    updateParents: (el: HTMLElement) => void = () => { /* no ancestor above this folder */ },
+  ): { li: HTMLLIElement; ul: HTMLUListElement } {
     const ul = document.createElement('ul');
     ul.className = 'fav-col-tree';
 
@@ -250,7 +272,7 @@ function initInstance(cfg: FavConfig): void {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = true;
-    attachCycleCheckbox(cb, li, true, () => rootUl, onToggle, () => { /* no ancestor above top-level folders */ });
+    attachCycleCheckbox(cb, li, true, () => rootUl, onToggle, updateParents);
     lbl.appendChild(cb);
     lbl.append(` ${label}`);
     row.appendChild(lbl);
@@ -260,21 +282,28 @@ function initInstance(cfg: FavConfig): void {
   }
 
   if (filterTreeEl) {
-    const rootUl = document.createElement('ul');
-    rootUl.className = 'fav-col-tree';
-    filterTreeEl.appendChild(rootUl);
+    const outerUl = document.createElement('ul');
+    outerUl.className = 'fav-col-tree';
+    filterTreeEl.appendChild(outerUl);
+
+    // A root "Alles" checkbox above Media/Pagina's/Berichten: a single
+    // always-available way to select everything again, regardless of
+    // whatever solo/toggle state the buckets below are in.
+    const allFolder = makeTopFolder(outerUl, 'Alles', () => { applyCollectionFilter(); applyPageFilter(); });
+    outerUl.appendChild(allFolder.li);
+    const rootUl = allFolder.ul;
 
     if (cfg.showMedia) {
-      const { li, ul } = makeTopFolder(rootUl, 'Media', () => applyCollectionFilter());
+      const { li, ul } = makeTopFolder(rootUl, 'Media', () => applyCollectionFilter(), updateColParents);
       rootUl.appendChild(li);
       colTreeUl = ul;
     }
     if (cfg.showContent) {
-      const { li, ul } = makeTopFolder(rootUl, 'Pagina\'s', () => applyPageFilter());
+      const { li, ul } = makeTopFolder(rootUl, 'Pagina\'s', () => applyPageFilter(), updateColParents);
       rootUl.appendChild(li);
       pgTreeUl = ul;
 
-      const berichtenFolder = makeTopFolder(rootUl, 'Berichten', () => applyPageFilter());
+      const berichtenFolder = makeTopFolder(rootUl, 'Berichten', () => applyPageFilter(), updateColParents);
       rootUl.appendChild(berichtenFolder.li);
       postTreeUl = berichtenFolder.ul;
     }
