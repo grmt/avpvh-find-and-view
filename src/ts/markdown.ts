@@ -23,6 +23,13 @@ function hasMarkdownTable(src: string): boolean {
   return false;
 }
 
+// Inline emphasis — *italic*, **bold**, ~~strikethrough~~ — typed by hand
+// the same way headings and tables are (see below): the marker must be
+// flush against a real character on both sides, not whitespace and not
+// another marker character, so "5 * 3" or "quote ends. * next" don't
+// false-positive on a lone asterisk used as punctuation.
+const EMPHASIS_RE = /(\*\*|\*|~~)([^\s*~](?:[\s\S]*?[^\s*~])?)\1/;
+
 // Documents hand-edited through the admin "Document bewerken" tool have no
 // way to set text_format (it only ever PUTs {id, text}), so a heading or
 // table typed there stays tagged as plain text. Recognize either as a
@@ -33,7 +40,7 @@ function hasMarkdownTable(src: string): boolean {
 // section headings in this content never use — they're consistently "##"
 // or deeper.
 export function looksLikeMarkdown(src: string): boolean {
-  return HEADING_RE.test(src) || hasMarkdownTable(src);
+  return HEADING_RE.test(src) || hasMarkdownTable(src) || EMPHASIS_RE.test(src);
 }
 
 export function renderPlain(src: string): string {
