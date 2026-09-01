@@ -44,5 +44,9 @@ export function looksLikeMarkdown(src: string): boolean {
 }
 
 export function renderPlain(src: string): string {
-  return src.split(/\n\n+/).map(p => `<p style="margin:0 0 .8em">${p.replace(/\n/g, '<br>')}</p>`).join('');
+  // white-space:pre-wrap so repeated spaces in the source (e.g. OCR'd
+  // column/table layout) stay visible instead of collapsing to one like
+  // normal HTML text -- unlike markdown mode, where whitespace collapsing
+  // is expected, plain text should render faithfully to what's on disk.
+  return src.split(/\n\n+/).map(p => `<p style="margin:0 0 .8em;white-space:pre-wrap">${p.replace(/\n/g, '<br>')}</p>`).join('');
 }

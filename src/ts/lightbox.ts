@@ -106,6 +106,10 @@ export class Lightbox {
   private highlightRects: HighlightRect[] = [];
   private hiddenPanel: 'img' | 'text' | null = null;
   private showingAltText = false;
+  // Persists across page navigation within one open() session, same as
+  // txtZoom — a reader who wants monospace for aligned OCR columns almost
+  // certainly wants it for every page of this document, not just one.
+  private monoFont = false;
   private editing = false;
   private saving = false;
 
@@ -332,6 +336,7 @@ export class Lightbox {
             <button class="fav-lb-zbtn">A</button>
             <button class="fav-lb-zbtn">+</button>
             <button class="fav-lb-zbtn fav-lb-format-toggle" style="display:none;width:auto;padding:0 .5em" title="Wissel tussen opgemaakte en platte tekstweergave"></button>
+            <button class="fav-lb-zbtn fav-lb-mono-toggle" style="width:auto;padding:0 .5em;font-family:monospace" title="Vast-breedte lettertype — handig als kolommen met spaties zijn uitgelijnd">Mono</button>
           </div>
           <div class="fav-lb-text-content"></div>
           <div class="fav-lb-edit-wrap" style="display:none">
@@ -428,6 +433,16 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-format-toggle')!.addEventListener('click', () => {
       this.showingAltText = !this.showingAltText;
       this.renderTextContent();
+    });
+
+    const monoBtn = this.el.querySelector('.fav-lb-mono-toggle') as HTMLButtonElement;
+    const textContentEl = this.el.querySelector('.fav-lb-text-content') as HTMLElement;
+    textContentEl.classList.toggle('fav-lb-mono', this.monoFont);
+    monoBtn.classList.toggle('fav-lb-active', this.monoFont);
+    monoBtn.addEventListener('click', () => {
+      this.monoFont = !this.monoFont;
+      textContentEl.classList.toggle('fav-lb-mono', this.monoFont);
+      monoBtn.classList.toggle('fav-lb-active', this.monoFont);
     });
 
     this.el.querySelector('.fav-lb-img')!.addEventListener('load', () => this.renderHighlights());

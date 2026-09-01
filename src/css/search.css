@@ -204,4 +204,6 @@
 .fav-lb-icon.fav-lb-active { background: rgba(255, 209, 102, .3); }
 .fav-lb-zbtn { border: 1px solid #ccc; background: #fff; color: #444; cursor: pointer; font-size: .95em; width: 1.7em; height: 1.7em; border-radius: 3px; line-height: 1; display: flex; align-items: center; justify-content: center; }
 .fav-lb-zbtn:hover { background: #eee; }
+.fav-lb-zbtn.fav-lb-active { background: #ffd166; border-color: #e0a800; }
+.fav-lb-text-content.fav-lb-mono, .fav-lb-text-content.fav-lb-mono p { font-family: ui-monospace, SFMono-Regular, Consolas, 'Courier New', monospace; }
 .fav-lb-iz { position: absolute; bottom: .5em; right: .5em; display: flex; gap: .3em; }
