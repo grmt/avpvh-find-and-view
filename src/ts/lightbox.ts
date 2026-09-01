@@ -341,7 +341,7 @@ export class Lightbox {
               <button class="fav-lb-btn fav-lb-fmt-strike" title="Doorgestreept (Ctrl+Shift+X)"><s>S</s></button>
               <span class="fav-lb-format-sep"></span>
               <button class="fav-lb-btn fav-lb-fmt-heading" title="Kop van de huidige regel (##)">H</button>
-              <button class="fav-lb-btn fav-lb-fmt-paragraph" title="Alinea herstellen — regels binnen de selectie (of huidige alinea) samenvoegen tot lopende tekst">&para;</button>
+              <button class="fav-lb-btn fav-lb-fmt-paragraph" title="Alinea herstellen — regels binnen de selectie (of huidige alinea) samenvoegen tot lopende tekst en overtollige spaties opschonen">&para;</button>
               <button class="fav-lb-btn fav-lb-fmt-table" title="Selectie omzetten naar een markdown-tabel (tab/spatie/|-gescheiden)">&#9783;</button>
             </div>
             <textarea class="fav-lb-edit-textarea" spellcheck="true" lang="nl"></textarea>
@@ -964,7 +964,11 @@ export class Lightbox {
     const selected = ta.value.slice(start, end);
     const joined = selected
       .split(/\n{2,}/)
-      .map(block => block.split('\n').map(l => l.trim()).filter(Boolean).join(' '))
+      // Join lines into flowing text, then collapse any run of 2+ spaces
+      // left over from column-aligned OCR source layout — a plain <textarea>
+      // shows those literally (unlike the rendered read-only view, where
+      // HTML's default whitespace collapsing already hides them).
+      .map(block => block.split('\n').map(l => l.trim()).filter(Boolean).join(' ').replace(/ {2,}/g, ' '))
       .join('\n\n');
     this.setTextareaValue(ta, ta.value.slice(0, start) + joined + ta.value.slice(end), start, start + joined.length);
   }

@@ -217,7 +217,7 @@ Please report this to https://github.com/markedjs/marked.`,s){let n="<p>An error
               <button class="fav-lb-btn fav-lb-fmt-strike" title="Doorgestreept (Ctrl+Shift+X)"><s>S</s></button>
               <span class="fav-lb-format-sep"></span>
               <button class="fav-lb-btn fav-lb-fmt-heading" title="Kop van de huidige regel (##)">H</button>
-              <button class="fav-lb-btn fav-lb-fmt-paragraph" title="Alinea herstellen — regels binnen de selectie (of huidige alinea) samenvoegen tot lopende tekst">&para;</button>
+              <button class="fav-lb-btn fav-lb-fmt-paragraph" title="Alinea herstellen — regels binnen de selectie (of huidige alinea) samenvoegen tot lopende tekst en overtollige spaties opschonen">&para;</button>
               <button class="fav-lb-btn fav-lb-fmt-table" title="Selectie omzetten naar een markdown-tabel (tab/spatie/|-gescheiden)">&#9783;</button>
             </div>
             <textarea class="fav-lb-edit-textarea" spellcheck="true" lang="nl"></textarea>
@@ -243,7 +243,7 @@ Please report this to https://github.com/markedjs/marked.`,s){let n="<p>An error
 `,Math.max(0,t-1));t=o===-1?0:o+2;const l=a.indexOf(`
 
 `,n);n=l===-1?a.length:l}const r=e.value.slice(t,n).split(/\n{2,}/).map(a=>a.split(`
-`).map(o=>o.trim()).filter(Boolean).join(" ")).join(`
+`).map(o=>o.trim()).filter(Boolean).join(" ").replace(/ {2,}/g," ")).join(`
 
 `);this.setTextareaValue(e,e.value.slice(0,t)+r+e.value.slice(n),t,t+r.length)}convertToTable(){const e=this.editTextarea(),t=e.selectionStart,n=e.selectionEnd,i=e.value.slice(t,n);if(!i.trim())return;const r=f=>{const g=f.trim();return g.includes("|")?g.split("|").map(d=>d.trim()).filter((d,v,b)=>d!==""||v!==0&&v!==b.length-1):g.includes("	")?g.split("	").map(d=>d.trim()):g.split(/ {2,}/).map(d=>d.trim())},a=i.split(`
 `).map(f=>f.trim()).filter(Boolean).map(r);if(!a.length)return;const o=Math.max(...a.map(f=>f.length)),l=f=>{for(;f.length<o;)f.push("");return f},u=l(a[0]),h=a.slice(1).map(l),p=[`| ${u.join(" | ")} |`,`| ${u.map(()=>"---").join(" | ")} |`,...h.map(f=>`| ${f.join(" | ")} |`)].join(`
