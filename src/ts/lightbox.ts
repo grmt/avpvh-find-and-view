@@ -174,6 +174,23 @@ export class Lightbox {
     // keys must move the cursor / do nothing special — not page-navigate
     // or pan the image underneath the user.
     const target = e.target as HTMLElement;
+
+    // A plain <textarea> tabs *out* to the next focusable element by
+    // default, which would silently kick you out of an edit — capture Tab
+    // here and insert a literal tab character instead, same as any real
+    // text editor. Only for the edit textarea itself: Tab in the search/
+    // replace panel's fields should keep moving between them normally.
+    const editTextarea = this.el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement | null;
+    if (target === editTextarea && e.key === 'Tab') {
+      e.preventDefault();
+      const start = editTextarea.selectionStart;
+      const end = editTextarea.selectionEnd;
+      editTextarea.value = editTextarea.value.slice(0, start) + '\t' + editTextarea.value.slice(end);
+      editTextarea.selectionStart = editTextarea.selectionEnd = start + 1;
+      editTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+
     if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') return;
 
     const arrowKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
