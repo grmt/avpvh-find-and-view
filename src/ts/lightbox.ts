@@ -158,6 +158,21 @@ export class Lightbox {
       void this.saveEdit();
       return;
     }
+    if (this.editing && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      this.wrapSelection('**');
+      return;
+    }
+    if (this.editing && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'i') {
+      e.preventDefault();
+      this.wrapSelection('*');
+      return;
+    }
+    if (this.editing && (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'x') {
+      e.preventDefault();
+      this.wrapSelection('~~');
+      return;
+    }
     if (e.key === 'Escape') {
       const searchPanel = this.el.querySelector('.fav-lb-search-panel');
       const historyPanel = this.el.querySelector('.fav-lb-history-panel');
@@ -320,6 +335,15 @@ export class Lightbox {
           </div>
           <div class="fav-lb-text-content"></div>
           <div class="fav-lb-edit-wrap" style="display:none">
+            <div class="fav-lb-format-bar">
+              <button class="fav-lb-btn fav-lb-fmt-bold" title="Vet (Ctrl+B)"><strong>B</strong></button>
+              <button class="fav-lb-btn fav-lb-fmt-italic" title="Cursief (Ctrl+I)"><em>I</em></button>
+              <button class="fav-lb-btn fav-lb-fmt-strike" title="Doorgestreept (Ctrl+Shift+X)"><s>S</s></button>
+              <span class="fav-lb-format-sep"></span>
+              <button class="fav-lb-btn fav-lb-fmt-heading" title="Kop van de huidige regel (##)">H</button>
+              <button class="fav-lb-btn fav-lb-fmt-paragraph" title="Alinea herstellen — regels binnen de selectie (of huidige alinea) samenvoegen tot lopende tekst">&para;</button>
+              <button class="fav-lb-btn fav-lb-fmt-table" title="Selectie omzetten naar een markdown-tabel (tab/spatie/|-gescheiden)">&#9783;</button>
+            </div>
             <textarea class="fav-lb-edit-textarea" spellcheck="true" lang="nl"></textarea>
             <div class="fav-lb-diff-view" style="display:none">
               <div class="fav-lb-diff-header">
@@ -360,6 +384,13 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-edit-cancel')!.addEventListener('click', () => this.exitEditMode());
     this.el.querySelector('.fav-lb-edit-save')!.addEventListener('click', () => void this.saveEdit());
     this.el.querySelector('.fav-lb-edit-ocr')!.addEventListener('click', () => void this.reOcr());
+
+    this.el.querySelector('.fav-lb-fmt-bold')!.addEventListener('click', () => this.wrapSelection('**'));
+    this.el.querySelector('.fav-lb-fmt-italic')!.addEventListener('click', () => this.wrapSelection('*'));
+    this.el.querySelector('.fav-lb-fmt-strike')!.addEventListener('click', () => this.wrapSelection('~~'));
+    this.el.querySelector('.fav-lb-fmt-heading')!.addEventListener('click', () => this.toggleHeading());
+    this.el.querySelector('.fav-lb-fmt-paragraph')!.addEventListener('click', () => this.reflowParagraph());
+    this.el.querySelector('.fav-lb-fmt-table')!.addEventListener('click', () => this.convertToTable());
 
     this.el.querySelector('.fav-lb-history-btn')!.addEventListener('click', () => void this.toggleHistoryPanel());
     this.el.querySelector('.fav-lb-diff-back')!.addEventListener('click', () => this.closeDiffView());
@@ -868,6 +899,107 @@ export class Lightbox {
       this.saving = false;
       ocrBtn.disabled = false;
     }
+  }
+
+  private editTextarea(): HTMLTextAreaElement {
+    return this.el!.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+  }
+
+  private setTextareaValue(ta: HTMLTextAreaElement, value: string, selStart: number, selEnd: number): void {
+    ta.value = value;
+    ta.selectionStart = selStart;
+    ta.selectionEnd = selEnd;
+    ta.focus();
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  // Wraps the selection in a markdown marker (**bold**, *italic*,
+  // ~~strikethrough~~); toggles it off if the selection is already wrapped.
+  private wrapSelection(marker: string): void {
+    const ta = this.editTextarea();
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const selected = ta.value.slice(start, end);
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(end);
+
+    if (selected.length >= marker.length * 2 && selected.startsWith(marker) && selected.endsWith(marker)) {
+      const inner = selected.slice(marker.length, selected.length - marker.length);
+      this.setTextareaValue(ta, before + inner + after, start, start + inner.length);
+    } else {
+      this.setTextareaValue(ta, before + marker + selected + marker + after, start + marker.length, end + marker.length);
+    }
+  }
+
+  // Toggles a "## " prefix on the line the cursor/selection starts on.
+  // Selects the whole resulting line rather than trying to preserve the
+  // exact prior cursor offset through a length change.
+  private toggleHeading(): void {
+    const ta = this.editTextarea();
+    const start = ta.selectionStart;
+    const lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+    let lineEnd = ta.value.indexOf('\n', start);
+    if (lineEnd === -1) lineEnd = ta.value.length;
+    const line = ta.value.slice(lineStart, lineEnd);
+    const newLine = /^#{1,6}\s/.test(line) ? line.replace(/^#{1,6}\s+/, '') : `## ${line}`;
+    this.setTextareaValue(ta, ta.value.slice(0, lineStart) + newLine + ta.value.slice(lineEnd), lineStart, lineStart + newLine.length);
+  }
+
+  // Joins hard-wrapped lines within the selection (or, with no selection,
+  // the current blank-line-delimited paragraph) into flowing text — the
+  // single most common cleanup a scanned page's OCR text needs, since the
+  // original page layout's line breaks get baked in as real newlines.
+  // Blank-line paragraph breaks within the selection are preserved.
+  private reflowParagraph(): void {
+    const ta = this.editTextarea();
+    let start = ta.selectionStart;
+    let end = ta.selectionEnd;
+    if (start === end) {
+      const text = ta.value;
+      const prevBreak = text.lastIndexOf('\n\n', Math.max(0, start - 1));
+      start = prevBreak === -1 ? 0 : prevBreak + 2;
+      const nextBreak = text.indexOf('\n\n', end);
+      end = nextBreak === -1 ? text.length : nextBreak;
+    }
+    const selected = ta.value.slice(start, end);
+    const joined = selected
+      .split(/\n{2,}/)
+      .map(block => block.split('\n').map(l => l.trim()).filter(Boolean).join(' '))
+      .join('\n\n');
+    this.setTextareaValue(ta, ta.value.slice(0, start) + joined + ta.value.slice(end), start, start + joined.length);
+  }
+
+  // Converts selected lines (tab-, multi-space-, or |-delimited) into a
+  // proper GFM markdown table with a header separator row.
+  private convertToTable(): void {
+    const ta = this.editTextarea();
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const selected = ta.value.slice(start, end);
+    if (!selected.trim()) return;
+
+    const splitLine = (l: string): string[] => {
+      const trimmed = l.trim();
+      if (trimmed.includes('|')) {
+        return trimmed.split('|').map(c => c.trim()).filter((c, i, arr) => c !== '' || (i !== 0 && i !== arr.length - 1));
+      }
+      if (trimmed.includes('\t')) return trimmed.split('\t').map(c => c.trim());
+      return trimmed.split(/ {2,}/).map(c => c.trim());
+    };
+
+    const rows = selected.split('\n').map(l => l.trim()).filter(Boolean).map(splitLine);
+    if (!rows.length) return;
+    const cols = Math.max(...rows.map(r => r.length));
+    const pad = (r: string[]): string[] => { while (r.length < cols) r.push(''); return r; };
+    const header = pad(rows[0]!);
+    const body = rows.slice(1).map(pad);
+    const md = [
+      `| ${header.join(' | ')} |`,
+      `| ${header.map(() => '---').join(' | ')} |`,
+      ...body.map(r => `| ${r.join(' | ')} |`),
+    ].join('\n');
+
+    this.setTextareaValue(ta, ta.value.slice(0, start) + md + ta.value.slice(end), start, start + md.length);
   }
 
   private async restPost<T extends object>(path: string, body: unknown): Promise<{ ok: boolean; data: T & { message?: string } }> {
