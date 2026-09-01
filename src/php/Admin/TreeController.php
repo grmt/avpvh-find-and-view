@@ -94,6 +94,55 @@ final class TreeController {
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
 			],
 		] );
+		register_rest_route( 'avpvh-fav/v1', '/scan/history', [
+			'methods'             => 'POST',
+			'callback'            => [ $this, 'scan_history' ],
+			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'args'                => [
+				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'page_number' => [ 'required' => true, 'type' => 'integer' ],
+			],
+		] );
+		register_rest_route( 'avpvh-fav/v1', '/scan/diff', [
+			'methods'             => 'POST',
+			'callback'            => [ $this, 'scan_diff' ],
+			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'args'                => [
+				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'page_number' => [ 'required' => true, 'type' => 'integer' ],
+				'version'     => [ 'required' => true, 'type' => 'integer' ],
+			],
+		] );
+		register_rest_route( 'avpvh-fav/v1', '/scan/delete', [
+			'methods'             => 'POST',
+			'callback'            => [ $this, 'delete_scan_page' ],
+			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'args'                => [
+				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'page_number' => [ 'required' => true, 'type' => 'integer' ],
+			],
+		] );
+		register_rest_route( 'avpvh-fav/v1', '/scan/consolidate', [
+			'methods'             => 'POST',
+			'callback'            => [ $this, 'consolidate_scan_collection' ],
+			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'args'                => [
+				'collection' => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+			],
+		] );
+		register_rest_route( 'avpvh-fav/v1', '/scan/replace', [
+			'methods'             => 'POST',
+			'callback'            => [ $this, 'replace_scan_collection' ],
+			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'args'                => [
+				'collection'     => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'query'          => [ 'required' => true, 'type' => 'string' ],
+				'replacement'    => [ 'type' => 'string', 'default' => '' ],
+				'regex'          => [ 'type' => 'boolean', 'default' => false ],
+				'case_sensitive' => [ 'type' => 'boolean', 'default' => false ],
+				'whole_word'     => [ 'type' => 'boolean', 'default' => false ],
+			],
+		] );
 		register_rest_route( 'avpvh-fav/v1', '/tree/mkdir', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'make_dir' ],
@@ -131,6 +180,52 @@ final class TreeController {
 		$abs  = realpath( $root . '/' . $rel );
 		if ( ! $abs || ! str_starts_with( $abs, $root ) ) return false;
 		return $abs;
+	}
+
+	/**
+	 * Finds an existing page_N.<ext> file by number, without guessing its
+	 * zero-padding width. $ext_pattern is a regex alternation, e.g.
+	 * 'txt|md' (prefers .md when both exist) or 'png|jpe?g'.
+	 */
+	private function resolve_page_file( string $dir, int $page_number, string $ext_pattern ): ?string {
+		$found = null;
+		foreach ( scandir( $dir ) as $entry ) {
+			if ( preg_match( "/^page_(\\d+)\\.({$ext_pattern})$/i", $entry, $m ) !== 1 ) continue;
+			if ( (int) $m[1] !== $page_number ) continue;
+			if ( $found === null || strtolower( $m[2] ) === 'md' ) $found = $dir . '/' . $entry;
+		}
+		return $found;
+	}
+
+	/** All files belonging to one page: its own extensions plus any .bak*. */
+	private function related_page_files( string $dir, string $label ): array {
+		$files = [];
+		foreach ( scandir( $dir ) as $entry ) {
+			if ( preg_match( '/^' . preg_quote( $label, '/' ) . '\.(png|jpe?g|txt|md)(\.bak\d)?$/i', $entry ) === 1 ) {
+				$files[] = $entry;
+			}
+		}
+		return $files;
+	}
+
+	private function rotate_backups( string $file ): void {
+		for ( $n = 3; $n > 1; $n-- ) {
+			$src = "{$file}.bak" . ( $n - 1 );
+			if ( is_file( $src ) ) rename( $src, "{$file}.bak{$n}" );
+		}
+		if ( is_file( $file ) ) copy( $file, "{$file}.bak1" );
+	}
+
+	/** Re-indexes one page file's current on-disk content as a single doc. */
+	private function reindex_one_page( string $file ): \WP_Error|null {
+		$result = $this->meili_client_and_index();
+		if ( is_wp_error( $result ) ) return $result;
+		[ $client, $index ] = $result;
+		$doc = self::build_source_document( new \SplFileInfo( $file ), $this->scan_root(), $this->scan_base_url() );
+		if ( $doc === null ) return null;
+		$task = $index->addDocuments( [ $doc ] );
+		$client->waitForTask( $task['taskUid'], 30000 );
+		return null;
 	}
 
 	private function build_tree( string $dir, string $root ): array {
@@ -289,35 +384,182 @@ final class TreeController {
 
 		// The page's zero-padding width lives only on disk — never guessed,
 		// editing only ever touches a page that already exists there.
-		$file = null;
-		foreach ( scandir( $dir ) as $entry ) {
-			if ( preg_match( '/^page_(\d+)\.(txt|md)$/i', $entry, $m ) !== 1 ) continue;
-			if ( (int) $m[1] !== $page_number ) continue;
-			if ( $file === null || strtolower( $m[2] ) === 'md' ) $file = $dir . '/' . $entry;
-		}
+		$file = $this->resolve_page_file( $dir, $page_number, 'txt|md' );
 		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
 
 		// Rotating .bak1 (latest) .. .bak3 (oldest), same convention as the
 		// local review tool, before overwriting the file.
-		for ( $n = 3; $n > 1; $n-- ) {
-			$src = "{$file}.bak" . ( $n - 1 );
-			if ( is_file( $src ) ) rename( $src, "{$file}.bak{$n}" );
-		}
-		if ( is_file( $file ) ) copy( $file, "{$file}.bak1" );
-
+		$this->rotate_backups( $file );
 		file_put_contents( $file, $text );
 
-		$result = $this->meili_client_and_index();
-		if ( is_wp_error( $result ) ) return $result;
-		[ $client, $index ] = $result;
+		$err = $this->reindex_one_page( $file );
+		if ( is_wp_error( $err ) ) return $err;
 
 		$doc = self::build_source_document( new \SplFileInfo( $file ), $this->scan_root(), $this->scan_base_url() );
 		if ( $doc === null ) return new \WP_Error( 'empty', 'Tekst mag niet leeg zijn', [ 'status' => 400 ] );
 
-		$task = $index->addDocuments( [ $doc ] );
-		$client->waitForTask( $task['taskUid'], 30000 );
-
 		return new \WP_REST_Response( [ 'ok' => true, 'text' => $doc['text'], 'text_format' => $doc['text_format'] ] );
+	}
+
+	/** Lists .bak1-3 backup versions for a page, newest first. */
+	public function scan_history( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$collection  = (string) $req->get_param( 'collection' );
+		$page_number = (int) $req->get_param( 'page_number' );
+
+		$dir = $this->safe_path( $collection );
+		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$file = $this->resolve_page_file( $dir, $page_number, 'txt|md' );
+		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
+
+		$versions = [];
+		for ( $n = 1; $n <= 3; $n++ ) {
+			$bak = "{$file}.bak{$n}";
+			$versions[] = [
+				'version' => $n,
+				'exists'  => is_file( $bak ),
+				'mtime'   => is_file( $bak ) ? wp_date( 'Y-m-d H:i:s', filemtime( $bak ) ) : null,
+			];
+		}
+		return new \WP_REST_Response( [ 'versions' => $versions ] );
+	}
+
+	/** Returns a backup version's text alongside the current text, for a client-side diff. */
+	public function scan_diff( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$collection  = (string) $req->get_param( 'collection' );
+		$page_number = (int) $req->get_param( 'page_number' );
+		$version     = (int) $req->get_param( 'version' );
+
+		$dir = $this->safe_path( $collection );
+		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$file = $this->resolve_page_file( $dir, $page_number, 'txt|md' );
+		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
+		$bak = "{$file}.bak{$version}";
+		if ( ! is_file( $bak ) ) return new \WP_Error( 'no_backup', 'Geen back-up gevonden', [ 'status' => 404 ] );
+
+		return new \WP_REST_Response( [
+			'old_text' => (string) file_get_contents( $bak ),
+			'new_text' => is_file( $file ) ? (string) file_get_contents( $file ) : '',
+		] );
+	}
+
+	/**
+	 * Moves a page's files (all extensions + backups) to a "verwijderd"
+	 * subfolder and shifts every later page down by one, mirroring the
+	 * local review tool. Reindexes the whole collection afterwards via the
+	 * existing, already-proven reindex_scans() rather than hand-rolling
+	 * renumbered Meilisearch upserts.
+	 */
+	public function delete_scan_page( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$collection  = (string) $req->get_param( 'collection' );
+		$page_number = (int) $req->get_param( 'page_number' );
+
+		$dir = $this->safe_path( $collection );
+		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$file = $this->resolve_page_file( $dir, $page_number, 'txt|md|png|jpe?g' );
+		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
+		$label = pathinfo( $file, PATHINFO_FILENAME );
+		$width = strlen( (string) $page_number );
+		if ( preg_match( '/^page_(\d+)$/', $label, $lm ) === 1 ) $width = strlen( $lm[1] );
+
+		$removed_dir = $dir . '/verwijderd';
+		if ( ! is_dir( $removed_dir ) ) mkdir( $removed_dir );
+
+		foreach ( $this->related_page_files( $dir, $label ) as $f ) {
+			$dest = "{$removed_dir}/{$f}";
+			if ( is_file( $dest ) ) unlink( $dest );
+			rename( "{$dir}/{$f}", $dest );
+		}
+
+		// Shift every later page down by one, ascending so renames never collide.
+		$pages = [];
+		foreach ( scandir( $dir ) as $entry ) {
+			if ( preg_match( '/^page_(\d+)\.(?:png|jpe?g|txt|md)$/i', $entry, $m ) === 1 && (int) $m[1] > $page_number ) {
+				$pages[ (int) $m[1] ] = true;
+			}
+		}
+		$nums = array_keys( $pages );
+		sort( $nums );
+		foreach ( $nums as $num ) {
+			$old_label = 'page_' . str_pad( (string) $num, $width, '0', STR_PAD_LEFT );
+			$new_label = 'page_' . str_pad( (string) ( $num - 1 ), $width, '0', STR_PAD_LEFT );
+			foreach ( $this->related_page_files( $dir, $old_label ) as $f ) {
+				$new_name = $new_label . substr( $f, strlen( $old_label ) );
+				rename( "{$dir}/{$f}", "{$dir}/{$new_name}" );
+			}
+		}
+
+		$result = $this->reindex_scans();
+		if ( is_wp_error( $result ) ) return $result;
+
+		return new \WP_REST_Response( [ 'ok' => true ] );
+	}
+
+	/** Regenerates consolidated_extracted_text.txt from every page's current text. */
+	public function consolidate_scan_collection( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$collection = (string) $req->get_param( 'collection' );
+		$dir = $this->safe_path( $collection );
+		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+
+		$texts = [];
+		$labels = [];
+		foreach ( scandir( $dir ) as $entry ) {
+			if ( preg_match( '/^page_(\d+)\.(png|jpe?g)$/i', $entry, $m ) !== 1 ) continue;
+			$labels[ (int) $m[1] ] = pathinfo( $entry, PATHINFO_FILENAME );
+		}
+		ksort( $labels );
+		foreach ( $labels as $label ) {
+			$file = $this->resolve_page_file( $dir, (int) preg_replace( '/^page_0*/', '', $label ), 'txt|md' );
+			$texts[] = $file !== null ? trim( (string) file_get_contents( $file ) ) : '';
+		}
+		if ( ! $texts ) return new \WP_Error( 'empty', 'Geen pagina\'s in deze collectie', [ 'status' => 400 ] );
+
+		file_put_contents( "{$dir}/consolidated_extracted_text.txt", implode( "\n\n--- PAGE SEPARATOR ---\n\n", $texts ) );
+		return new \WP_REST_Response( [ 'ok' => true, 'pages' => count( $texts ) ] );
+	}
+
+	/**
+	 * Finds/replaces across every page's text file in a collection, with the
+	 * same rotating backup as a normal edit, then re-indexes each changed
+	 * page individually (filenames/numbering never change here).
+	 */
+	public function replace_scan_collection( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$collection     = (string) $req->get_param( 'collection' );
+		$query          = (string) $req->get_param( 'query' );
+		$replacement    = (string) $req->get_param( 'replacement' );
+		$use_regex      = (bool) $req->get_param( 'regex' );
+		$case_sensitive = (bool) $req->get_param( 'case_sensitive' );
+		$whole_word     = (bool) $req->get_param( 'whole_word' );
+
+		if ( $query === '' ) return new \WP_Error( 'no_query', 'Zoekterm is verplicht', [ 'status' => 400 ] );
+
+		$dir = $this->safe_path( $collection );
+		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+
+		$pattern = $use_regex ? $query : preg_quote( $query, '/' );
+		if ( $whole_word ) $pattern = '\b(?:' . $pattern . ')\b';
+		$flags = $case_sensitive ? '' : 'i';
+		$regex = "/{$pattern}/u{$flags}";
+		if ( @preg_match( $regex, '' ) === false ) return new \WP_Error( 'bad_regex', 'Ongeldige regex', [ 'status' => 400 ] );
+
+		$total = 0;
+		$pages_changed = [];
+		foreach ( scandir( $dir ) as $entry ) {
+			if ( preg_match( '/^page_\d+\.(?:txt|md)$/i', $entry ) !== 1 ) continue;
+			$file = "{$dir}/{$entry}";
+			$text = (string) file_get_contents( $file );
+			$new_text = preg_replace( $regex, str_replace( '$', '\$', $replacement ), $text, -1, $count );
+			if ( ! $count ) continue;
+
+			$this->rotate_backups( $file );
+			file_put_contents( $file, $new_text );
+			$err = $this->reindex_one_page( $file );
+			if ( is_wp_error( $err ) ) return $err;
+
+			$total += $count;
+			$pages_changed[] = $entry;
+		}
+
+		return new \WP_REST_Response( [ 'ok' => true, 'total_replacements' => $total, 'pages_changed' => $pages_changed ] );
 	}
 
 	/**
@@ -333,13 +575,7 @@ final class TreeController {
 		$dir = $this->safe_path( $collection );
 		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 
-		$image = null;
-		foreach ( scandir( $dir ) as $entry ) {
-			if ( preg_match( '/^page_(\d+)\.(png|jpe?g)$/i', $entry, $m ) !== 1 ) continue;
-			if ( (int) $m[1] !== $page_number ) continue;
-			$image = $dir . '/' . $entry;
-			break;
-		}
+		$image = $this->resolve_page_file( $dir, $page_number, 'png|jpe?g' );
 		if ( $image === null ) return new \WP_Error( 'no_image', 'Paginabeeld niet gevonden', [ 'status' => 404 ] );
 
 		$mime = strtolower( (string) pathinfo( $image, PATHINFO_EXTENSION ) ) === 'png' ? 'image/png' : 'image/jpeg';

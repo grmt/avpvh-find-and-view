@@ -2,6 +2,38 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 import type { FavConfig } from './types';
 
+const DIFF_TOKEN_RE = /\s+|\S+/g;
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+}
+
+// Word-level "track changes" diff, mirroring local_review_tool.py's inline diff
+// view: an LCS over whitespace/word tokens, deletions struck through,
+// insertions highlighted, flowing as normal text.
+function diffWords(oldText: string, newText: string): string {
+  const a = oldText.match(DIFF_TOKEN_RE) ?? [];
+  const b = newText.match(DIFF_TOKEN_RE) ?? [];
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
+  }
+  let i = 0, j = 0;
+  const parts: string[] = [];
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { parts.push(escapeHtml(a[i]!)); i++; j++; }
+    else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) { parts.push(`<del>${escapeHtml(a[i]!)}</del>`); i++; }
+    else { parts.push(`<ins>${escapeHtml(b[j]!)}</ins>`); j++; }
+  }
+  while (i < n) { parts.push(`<del>${escapeHtml(a[i]!)}</del>`); i++; }
+  while (j < m) { parts.push(`<ins>${escapeHtml(b[j]!)}</ins>`); j++; }
+  return parts.join('');
+}
+
 // Vite's `?url` asset imports don't resolve correctly in this IIFE lib build,
 // so derive the worker's URL from wherever this script itself was loaded from
 // (search.iife.js and pdf.worker.js are always deployed side by side). Served
@@ -108,8 +140,42 @@ export class Lightbox {
       : Lightbox.FULLSCREEN_ENTER_SVG;
   };
 
+  private readonly outsideClickHandler = (e: MouseEvent): void => {
+    if (!this.el) return;
+    if (!(e.target as Element).closest('.fav-lb-search-wrap')) {
+      this.el.querySelector('.fav-lb-search-panel')?.classList.remove('fav-open');
+    }
+    if (!(e.target as Element).closest('.fav-lb-history-wrap')) {
+      this.el.querySelector('.fav-lb-history-panel')?.classList.remove('fav-open');
+    }
+  };
+
   private readonly keyHandler = (e: KeyboardEvent): void => {
     if (!this.el) return;
+
+    if ((e.ctrlKey || e.metaKey) && e.key === 's' && this.editing) {
+      e.preventDefault();
+      void this.saveEdit();
+      return;
+    }
+    if (e.key === 'Escape') {
+      const searchPanel = this.el.querySelector('.fav-lb-search-panel');
+      const historyPanel = this.el.querySelector('.fav-lb-history-panel');
+      const diffView = this.el.querySelector('.fav-lb-diff-view') as HTMLElement | null;
+      if (searchPanel?.classList.contains('fav-open')) { searchPanel.classList.remove('fav-open'); return; }
+      if (historyPanel?.classList.contains('fav-open')) { historyPanel.classList.remove('fav-open'); return; }
+      if (diffView && diffView.style.display !== 'none') { this.closeDiffView(); return; }
+      if (this.editing) { this.exitEditMode(); return; }
+      this.close();
+      return;
+    }
+
+    // While typing in the edit textarea or a search/replace input, arrow
+    // keys must move the cursor / do nothing special — not page-navigate
+    // or pan the image underneath the user.
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') return;
+
     const arrowKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
     if (arrowKeys.includes(e.key) && this.imgZoom > 1.01) {
       // Zoomed in: arrows pan the image instead of navigating, since
@@ -129,7 +195,6 @@ export class Lightbox {
       const i = this.findMatchIdx(e.key === 'ArrowUp' ? -1 : 1);
       if (i >= 0) this.show(i);
     }
-    if (e.key === 'Escape') this.close();
   };
 
   open(items: LightboxItem[], startIdx: number, onClose?: () => void): void {
@@ -176,6 +241,36 @@ export class Lightbox {
           <button class="fav-lb-btn fav-lb-icon fav-lb-edit" title="Tekst bewerken" style="display:none">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
           </button>
+          <div class="fav-lb-search-wrap" style="position:relative;display:none">
+            <button class="fav-lb-btn fav-lb-icon fav-lb-search-btn" title="Zoeken in deze collectie">
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            </button>
+            <div class="fav-lb-search-panel">
+              <div class="fav-lb-search-toolbar">
+                <input class="fav-lb-search-input" type="search" placeholder="Zoek in collectie…" autocomplete="off">
+              </div>
+              <div class="fav-lb-search-replace-row" style="display:none">
+                <label><input type="checkbox" class="fav-lb-search-regex"> Regex</label>
+                <label><input type="checkbox" class="fav-lb-search-case"> Hoofdlettergevoelig</label>
+                <label><input type="checkbox" class="fav-lb-search-word"> Heel woord</label>
+                <input class="fav-lb-replace-input" type="text" placeholder="Vervangen door…" autocomplete="off">
+                <button class="fav-lb-btn fav-lb-replace-all-btn">Vervang alles</button>
+              </div>
+              <div class="fav-lb-search-results"></div>
+            </div>
+          </div>
+          <div class="fav-lb-history-wrap" style="position:relative;display:none">
+            <button class="fav-lb-btn fav-lb-icon fav-lb-history-btn" title="Back-upgeschiedenis">
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 7 7c-1.9 0-3.62-.79-4.83-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8z"/></svg>
+            </button>
+            <div class="fav-lb-history-panel"></div>
+          </div>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-consolidate" title="Overzicht (consolidated_extracted_text.txt) opnieuw genereren" style="display:none">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M4 4h16v2H4zm0 5h16v2H4zm0 5h10v2H4zm0 5h10v2H4zm14-4v6l4-3z"/></svg>
+          </button>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-delete-page" title="Pagina verwijderen" style="display:none">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+          </button>
           <button class="fav-lb-btn fav-lb-icon fav-lb-fullscreen" title="Volledig scherm">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
           </button>
@@ -209,6 +304,13 @@ export class Lightbox {
           <div class="fav-lb-text-content"></div>
           <div class="fav-lb-edit-wrap" style="display:none">
             <textarea class="fav-lb-edit-textarea" spellcheck="true" lang="nl"></textarea>
+            <div class="fav-lb-diff-view" style="display:none">
+              <div class="fav-lb-diff-header">
+                <span class="fav-lb-diff-title"></span>
+                <button class="fav-lb-btn fav-lb-diff-back">&larr; Terug naar bewerken</button>
+              </div>
+              <div class="fav-lb-diff-body"></div>
+            </div>
             <div class="fav-lb-edit-bar">
               <span class="fav-lb-edit-status"></span>
               <button class="fav-lb-btn fav-lb-edit-ocr" title="Vervang de tekst hieronder door een nieuwe OCR-poging op het scanbeeld">OCR opnieuw</button>
@@ -241,6 +343,23 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-edit-cancel')!.addEventListener('click', () => this.exitEditMode());
     this.el.querySelector('.fav-lb-edit-save')!.addEventListener('click', () => void this.saveEdit());
     this.el.querySelector('.fav-lb-edit-ocr')!.addEventListener('click', () => void this.reOcr());
+
+    this.el.querySelector('.fav-lb-history-btn')!.addEventListener('click', () => void this.toggleHistoryPanel());
+    this.el.querySelector('.fav-lb-diff-back')!.addEventListener('click', () => this.closeDiffView());
+    this.el.querySelector('.fav-lb-delete-page')!.addEventListener('click', () => void this.deleteCurrentPage());
+    this.el.querySelector('.fav-lb-consolidate')!.addEventListener('click', () => void this.consolidateCollection());
+
+    const searchInput = this.el.querySelector('.fav-lb-search-input') as HTMLInputElement;
+    let searchTimer: ReturnType<typeof setTimeout> | null = null;
+    searchInput.addEventListener('input', () => {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => void this.runCollectionSearch(searchInput.value), 250);
+    });
+    this.el.querySelector('.fav-lb-search-btn')!.addEventListener('click', () => {
+      this.el!.querySelector('.fav-lb-search-panel')!.classList.toggle('fav-open');
+    });
+    this.el.querySelector('.fav-lb-replace-all-btn')!.addEventListener('click', () => void this.replaceAllInCollection());
+    document.addEventListener('click', this.outsideClickHandler);
 
     this.el.querySelector('.fav-lb-fullscreen')!.addEventListener('click', () => {
       if (document.fullscreenElement) void document.exitFullscreen();
@@ -499,6 +618,7 @@ export class Lightbox {
     this.el = null;
     document.removeEventListener('keydown', this.keyHandler);
     document.removeEventListener('fullscreenchange', this.fullscreenHandler);
+    document.removeEventListener('click', this.outsideClickHandler);
     this.pageImageCache.forEach(url => URL.revokeObjectURL(url));
     this.pageImageCache.clear();
     this.pdfDocs.forEach(task => { void task.destroy().catch(() => undefined); });
@@ -517,8 +637,18 @@ export class Lightbox {
     this.editing = false;
     (el.querySelector('.fav-lb-edit-wrap') as HTMLElement).style.display = 'none';
     (el.querySelector('.fav-lb-text-content') as HTMLElement).style.display = '';
+    this.closeDiffView();
+    el.querySelector('.fav-lb-search-panel')?.classList.remove('fav-open');
+    el.querySelector('.fav-lb-history-panel')?.classList.remove('fav-open');
+
+    const isEditablePage = item.collection != null && item.page != null;
     const editBtn = el.querySelector('.fav-lb-edit') as HTMLButtonElement;
-    editBtn.style.display = this.cfg.canEdit && item.collection != null && item.page != null ? '' : 'none';
+    editBtn.style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
+    (el.querySelector('.fav-lb-history-wrap') as HTMLElement).style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
+    (el.querySelector('.fav-lb-delete-page') as HTMLElement).style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
+    (el.querySelector('.fav-lb-consolidate') as HTMLElement).style.display = this.cfg.canEdit && item.collection != null ? '' : 'none';
+    (el.querySelector('.fav-lb-search-wrap') as HTMLElement).style.display = item.collection != null ? '' : 'none';
+    (el.querySelector('.fav-lb-search-replace-row') as HTMLElement).style.display = this.cfg.canEdit ? '' : 'none';
 
     const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
     const loadingEl = el.querySelector('.fav-lb-loading') as HTMLElement;
@@ -633,6 +763,7 @@ export class Lightbox {
     if (!item || item.collection == null || item.page == null) return;
     this.editing = true;
     if (this.hiddenPanel === 'text') this.togglePanel('text');
+    this.closeDiffView();
     (el.querySelector('.fav-lb-text-content') as HTMLElement).style.display = 'none';
     (el.querySelector('.fav-lb-edit-wrap') as HTMLElement).style.display = 'flex';
     const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
@@ -720,6 +851,178 @@ export class Lightbox {
       this.saving = false;
       ocrBtn.disabled = false;
     }
+  }
+
+  private async restPost<T extends object>(path: string, body: unknown): Promise<{ ok: boolean; data: T & { message?: string } }> {
+    const res = await fetch(`${this.cfg.restRoot}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({})) as T & { message?: string };
+    return { ok: res.ok, data };
+  }
+
+  private async toggleHistoryPanel(): Promise<void> {
+    const el = this.el!;
+    const panel = el.querySelector('.fav-lb-history-panel') as HTMLElement;
+    if (panel.classList.contains('fav-open')) {
+      panel.classList.remove('fav-open');
+      return;
+    }
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+
+    const { ok, data } = await this.restPost<{ versions: Array<{ version: number; exists: boolean; mtime: string | null }> }>(
+      'scan/history', { collection: item.collection, page_number: item.page },
+    );
+    if (!ok || !data.versions) return;
+
+    panel.innerHTML = data.versions.map(v => v.exists
+      ? `<div class="fav-lb-history-row"><span>.bak${v.version}${v.version === 1 ? ' (meest recent)' : ''} — ${v.mtime}</span><button type="button" class="fav-lb-btn fav-lb-history-diff-btn" data-version="${v.version}">Diff</button></div>`
+      : `<div class="fav-lb-history-row fav-lb-history-empty"><span>.bak${v.version} — (geen back-up)</span></div>`,
+    ).join('');
+    panel.querySelectorAll<HTMLButtonElement>('.fav-lb-history-diff-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        panel.classList.remove('fav-open');
+        void this.openDiffView(Number(btn.dataset['version']));
+      });
+    });
+    panel.classList.add('fav-open');
+  }
+
+  private async openDiffView(version: number): Promise<void> {
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    if (!this.editing) this.enterEditMode();
+
+    const { ok, data } = await this.restPost<{ old_text?: string; new_text?: string }>(
+      'scan/diff', { collection: item.collection, page_number: item.page, version },
+    );
+    if (!ok || data.old_text == null) return;
+
+    const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+    const diffView = el.querySelector('.fav-lb-diff-view') as HTMLElement;
+    el.querySelector('.fav-lb-diff-title')!.textContent = `Diff — .bak${version} vs. huidige tekst in het bewerkveld`;
+    el.querySelector('.fav-lb-diff-body')!.innerHTML = diffWords(data.old_text, textarea.value);
+    diffView.style.display = 'flex';
+    textarea.style.display = 'none';
+  }
+
+  private closeDiffView(): void {
+    const el = this.el;
+    if (!el) return;
+    (el.querySelector('.fav-lb-diff-view') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-edit-textarea') as HTMLElement).style.display = '';
+  }
+
+  private async deleteCurrentPage(): Promise<void> {
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    const ok = confirm(
+      `Pagina ${item.page} verwijderen?\n` +
+      `Het bestand wordt verplaatst naar de submap 'verwijderd' (niet permanent gewist) ` +
+      `en latere pagina's schuiven een nummer terug.`,
+    );
+    if (!ok) return;
+
+    const collection = item.collection;
+    const pageNum = item.page;
+    const { ok: reqOk, data } = await this.restPost<object>('scan/delete', { collection, page_number: pageNum });
+    if (!reqOk) { alert((data as { message?: string }).message || 'Verwijderen mislukt.'); return; }
+
+    // Reflect the server-side renumbering locally instead of re-fetching the
+    // whole collection: drop this item, shift every later page in the same
+    // collection down by one.
+    this.items = this.items
+      .filter((_, i) => i !== this.idx)
+      .map(it => (it.collection === collection && it.page != null && it.page > pageNum)
+        ? { ...it, page: it.page - 1, caption: it.caption.replace(/pagina \d+/i, `pagina ${it.page - 1}`) }
+        : it);
+
+    if (!this.items.length) { this.close(); return; }
+    this.show(Math.min(this.idx, this.items.length - 1));
+  }
+
+  private async consolidateCollection(): Promise<void> {
+    const item = this.items[this.idx];
+    if (!item || item.collection == null) return;
+    const ok = confirm(
+      `consolidated_extracted_text.txt opnieuw genereren voor "${item.collection}"?\n` +
+      `De huidige inhoud van dat bestand wordt overschreven.`,
+    );
+    if (!ok) return;
+
+    const { ok: reqOk, data } = await this.restPost<{ pages?: number }>('scan/consolidate', { collection: item.collection });
+    alert(reqOk ? `Overzicht bijgewerkt (${data.pages ?? 0} pagina's).` : (data.message || 'Genereren mislukt.'));
+  }
+
+  private async runCollectionSearch(query: string): Promise<void> {
+    const el = this.el!;
+    const resultsEl = el.querySelector('.fav-lb-search-results') as HTMLElement;
+    const item = this.items[this.idx];
+    if (query.length < 2 || item?.collection == null) { resultsEl.innerHTML = ''; return; }
+
+    const data = await fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        q: query,
+        filter: `collection = "${item.collection}"`,
+        limit: 30,
+        attributesToRetrieve: ['page_number'],
+        attributesToCrop: ['text'],
+        cropLength: 24,
+        attributesToHighlight: ['text'],
+      }),
+    }).then(r => r.json()) as { hits?: Array<{ page_number?: number; _formatted?: { text?: string } }> };
+
+    const hits = data.hits ?? [];
+    if (!hits.length) {
+      resultsEl.innerHTML = '<div class="fav-lb-search-empty">Geen resultaten.</div>';
+      return;
+    }
+    resultsEl.innerHTML = hits.map(h =>
+      `<button type="button" class="fav-lb-search-result" data-page="${h.page_number ?? ''}">` +
+      `<span class="fav-lb-search-result-label">Pagina ${h.page_number ?? '?'}</span>` +
+      `<span class="fav-lb-search-result-snippet">${h._formatted?.text ?? ''}</span></button>`,
+    ).join('');
+    resultsEl.querySelectorAll<HTMLButtonElement>('.fav-lb-search-result').forEach(btn => {
+      const pageNum = Number(btn.dataset['page']);
+      btn.addEventListener('click', () => {
+        const idx = this.items.findIndex(it => it.collection === item.collection && it.page === pageNum);
+        if (idx < 0) return;
+        el.querySelector('.fav-lb-search-panel')!.classList.remove('fav-open');
+        this.show(idx);
+      });
+    });
+  }
+
+  private async replaceAllInCollection(): Promise<void> {
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null) return;
+    const query = (el.querySelector('.fav-lb-search-input') as HTMLInputElement).value;
+    const replacement = (el.querySelector('.fav-lb-replace-input') as HTMLInputElement).value;
+    const regex = (el.querySelector('.fav-lb-search-regex') as HTMLInputElement).checked;
+    const caseSensitive = (el.querySelector('.fav-lb-search-case') as HTMLInputElement).checked;
+    const wholeWord = (el.querySelector('.fav-lb-search-word') as HTMLInputElement).checked;
+    if (!query) return;
+
+    const ok = confirm(
+      `"${query}" vervangen door "${replacement}" in alle pagina's van "${item.collection}" op de server?\n` +
+      `Dit kan niet ongedaan gemaakt worden via de editor (wel via de .bak-bestanden per pagina).`,
+    );
+    if (!ok) return;
+
+    const { ok: reqOk, data } = await this.restPost<{ total_replacements?: number; pages_changed?: string[] }>(
+      'scan/replace', { collection: item.collection, query, replacement, regex, case_sensitive: caseSensitive, whole_word: wholeWord },
+    );
+    if (!reqOk) { alert(data.message || 'Vervangen mislukt.'); return; }
+    alert(`${data.total_replacements ?? 0} vervanging(en) doorgevoerd in ${data.pages_changed?.length ?? 0} pagina('s).`);
+
+    if (data.pages_changed && data.pages_changed.length > 0) this.show(this.idx);
   }
 
   private setImage(src: string): void {
