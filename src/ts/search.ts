@@ -188,7 +188,48 @@ function initInstance(cfg: FavConfig): void {
   let pgTreeUl: HTMLUListElement | null = null;
   let postTreeUl: HTMLUListElement | null = null;
 
-  function makeTopFolder(label: string, onToggle: () => void): { li: HTMLLIElement; ul: HTMLUListElement } {
+  // Clicking a tree checkbox normally just toggles it (check/uncheck this
+  // branch, cascading to its own descendants, same as native behavior).
+  // Every 3rd click on the *same* checkbox instead solos that branch:
+  // this node and its descendants end up checked, and everything else
+  // within the same top-level tree (Media / Pagina's / Berichten) gets
+  // unchecked — a quick way to isolate one branch without unchecking
+  // every sibling by hand. The cycle then repeats (toggle, toggle, solo, ...).
+  function attachCycleCheckbox(
+    cb: HTMLInputElement,
+    li: HTMLElement,
+    hasChildren: boolean,
+    scopeRoot: () => HTMLElement | null,
+    onFilterChange: () => void,
+    updateParents: (el: HTMLElement) => void,
+  ): void {
+    let clickPhase = 0;
+    cb.addEventListener('change', () => {
+      clickPhase = (clickPhase + 1) % 3;
+      const root = clickPhase === 0 ? scopeRoot() : null;
+      if (root) {
+        // Solo: this branch checked, everything else in the tree unchecked.
+        const mine = new Set<HTMLInputElement>([...li.querySelectorAll<HTMLInputElement>('input[type=checkbox]')]);
+        mine.add(cb);
+        root.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
+          c.checked = mine.has(c);
+          c.indeterminate = false;
+        });
+        root.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(leaf => updateParents(leaf));
+      } else {
+        if (hasChildren) {
+          li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
+            c.checked = cb.checked;
+            c.indeterminate = false;
+          });
+        }
+        updateParents(li);
+      }
+      onFilterChange();
+    });
+  }
+
+  function makeTopFolder(rootUl: HTMLElement, label: string, onToggle: () => void): { li: HTMLLIElement; ul: HTMLUListElement } {
     const ul = document.createElement('ul');
     ul.className = 'fav-col-tree';
 
@@ -209,13 +250,7 @@ function initInstance(cfg: FavConfig): void {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = true;
-    cb.addEventListener('change', () => {
-      ul.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
-        c.checked = cb.checked;
-        c.indeterminate = false;
-      });
-      onToggle();
-    });
+    attachCycleCheckbox(cb, li, true, () => rootUl, onToggle, () => { /* no ancestor above top-level folders */ });
     lbl.appendChild(cb);
     lbl.append(` ${label}`);
     row.appendChild(lbl);
@@ -230,16 +265,16 @@ function initInstance(cfg: FavConfig): void {
     filterTreeEl.appendChild(rootUl);
 
     if (cfg.showMedia) {
-      const { li, ul } = makeTopFolder('Media', () => applyCollectionFilter());
+      const { li, ul } = makeTopFolder(rootUl, 'Media', () => applyCollectionFilter());
       rootUl.appendChild(li);
       colTreeUl = ul;
     }
     if (cfg.showContent) {
-      const { li, ul } = makeTopFolder('Pagina\'s', () => applyPageFilter());
+      const { li, ul } = makeTopFolder(rootUl, 'Pagina\'s', () => applyPageFilter());
       rootUl.appendChild(li);
       pgTreeUl = ul;
 
-      const berichtenFolder = makeTopFolder('Berichten', () => applyPageFilter());
+      const berichtenFolder = makeTopFolder(rootUl, 'Berichten', () => applyPageFilter());
       rootUl.appendChild(berichtenFolder.li);
       postTreeUl = berichtenFolder.ul;
     }
@@ -470,13 +505,12 @@ function initInstance(cfg: FavConfig): void {
             cb.type = 'checkbox';
             cb.checked = true;
             cb.dataset['pageUrl'] = nd.url;
-            cb.addEventListener('change', () => {
-              if (hasChildren) {
-                li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => { c.checked = cb.checked; c.indeterminate = false; });
-              }
-              applyPageFilter();
-              updatePgParents(li);
-            });
+            attachCycleCheckbox(
+              cb, li, hasChildren,
+              () => (pgTreeUl?.contains(li) ? pgTreeUl : postTreeUl),
+              applyPageFilter,
+              updatePgParents,
+            );
             label.appendChild(cb);
             label.append(` ${nd.title}`);
             row.appendChild(label);
@@ -635,16 +669,7 @@ function initInstance(cfg: FavConfig): void {
       cb.type = 'checkbox';
       cb.checked = true;
       if (!hasChildren) cb.dataset['leafPath'] = info._path;
-      cb.addEventListener('change', () => {
-        if (hasChildren) {
-          li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
-            c.checked = cb.checked;
-            c.indeterminate = false;
-          });
-        }
-        applyCollectionFilter();
-        updateColParents(li);
-      });
+      attachCycleCheckbox(cb, li, hasChildren, () => colTreeUl, applyCollectionFilter, updateColParents);
       label.appendChild(cb);
       label.append(` ${name}`);
       if (!hasChildren) {
