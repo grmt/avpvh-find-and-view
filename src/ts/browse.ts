@@ -332,8 +332,8 @@ export class BrowseMode {
         const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
         const hasImage = h.has_image !== false;
         return isPdf
-          ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text, textAlt, kind: 'pdf' as const, page: h.page_number ?? undefined }
-          : { url: h.url, caption, text, textAlt, ...(hasImage ? {} : { kind: 'text' as const }) };
+          ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text, textAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, collection: h.collection, rawText: h.text }
+          : { url: h.url, caption, text, textAlt, collection: h.collection, rawText: h.text, page: h.page_number ?? undefined, ...(hasImage ? {} : { kind: 'text' as const }) };
       });
 
       const startIdx = allHits.findIndex(h => h.id === hitId);

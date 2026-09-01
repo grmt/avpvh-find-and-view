@@ -48,6 +48,9 @@ final class FindAndViewShortcode {
 			'browseMode'       => $browse_mode,
 			'browseRootLabel'  => $atts['browse_root_label'],
 			'placeholder'      => $atts['placeholder'],
+			'canEdit'          => current_user_can( 'edit_posts' ),
+			'restRoot'         => rest_url( 'avpvh-fav/v1/' ),
+			'editNonce'        => wp_create_nonce( 'wp_rest' ),
 		];
 
 		ob_start();

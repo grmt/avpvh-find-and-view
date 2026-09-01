@@ -29,6 +29,12 @@ export interface FavConfig {
   browseMode: boolean;
   browseRootLabel: string;
   placeholder: string;
+  // Whether this visitor may edit scan page text via the lightbox's Edit
+  // button. The real gate is the REST endpoint's own permission check —
+  // this only controls whether the button is shown at all.
+  canEdit: boolean;
+  restRoot: string;
+  editNonce: string;
 }
 
 // Scan pages order by page_number; chat transcripts have no page_number and

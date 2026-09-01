@@ -74,6 +74,16 @@ final class TreeController {
 			'callback'            => [ $this, 'doc_save' ],
 			'permission_callback' => fn() => current_user_can( 'manage_options' ),
 		] );
+		register_rest_route( 'avpvh-fav/v1', '/scan/edit', [
+			'methods'             => 'POST',
+			'callback'            => [ $this, 'edit_scan_page' ],
+			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'args'                => [
+				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'page_number' => [ 'required' => true, 'type' => 'integer' ],
+				'text'        => [ 'required' => true, 'type' => 'string' ],
+			],
+		] );
 		register_rest_route( 'avpvh-fav/v1', '/tree/mkdir', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'make_dir' ],
@@ -251,6 +261,53 @@ final class TreeController {
 		} catch ( \Exception $e ) {
 			return new \WP_Error( 'meili_error', $e->getMessage(), [ 'status' => 500 ] );
 		}
+	}
+
+	/**
+	 * Saves an edit made through the lightbox's Edit button: writes the new
+	 * text straight to the page's file on disk (so it survives the next
+	 * reindex_scans() run, unlike an edit that only touched Meilisearch)
+	 * with a rotating .bak1-3 backup, then upserts just that one document.
+	 */
+	public function edit_scan_page( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$collection  = (string) $req->get_param( 'collection' );
+		$page_number = (int) $req->get_param( 'page_number' );
+		$text        = (string) $req->get_param( 'text' );
+
+		$dir = $this->safe_path( $collection );
+		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+
+		// The page's zero-padding width lives only on disk — never guessed,
+		// editing only ever touches a page that already exists there.
+		$file = null;
+		foreach ( scandir( $dir ) as $entry ) {
+			if ( preg_match( '/^page_(\d+)\.(txt|md)$/i', $entry, $m ) !== 1 ) continue;
+			if ( (int) $m[1] !== $page_number ) continue;
+			if ( $file === null || strtolower( $m[2] ) === 'md' ) $file = $dir . '/' . $entry;
+		}
+		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
+
+		// Rotating .bak1 (latest) .. .bak3 (oldest), same convention as the
+		// local review tool, before overwriting the file.
+		for ( $n = 3; $n > 1; $n-- ) {
+			$src = "{$file}.bak" . ( $n - 1 );
+			if ( is_file( $src ) ) rename( $src, "{$file}.bak{$n}" );
+		}
+		if ( is_file( $file ) ) copy( $file, "{$file}.bak1" );
+
+		file_put_contents( $file, $text );
+
+		$result = $this->meili_client_and_index();
+		if ( is_wp_error( $result ) ) return $result;
+		[ $client, $index ] = $result;
+
+		$doc = self::build_source_document( new \SplFileInfo( $file ), $this->scan_root(), $this->scan_base_url() );
+		if ( $doc === null ) return new \WP_Error( 'empty', 'Tekst mag niet leeg zijn', [ 'status' => 400 ] );
+
+		$task = $index->addDocuments( [ $doc ] );
+		$client->waitForTask( $task['taskUid'], 30000 );
+
+		return new \WP_REST_Response( [ 'ok' => true, 'text' => $doc['text'], 'text_format' => $doc['text_format'] ] );
 	}
 
 	public function reindex_content(): \WP_REST_Response|\WP_Error {

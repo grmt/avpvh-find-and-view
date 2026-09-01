@@ -1,4 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
+import type { FavConfig } from './types';
 
 // Vite's `?url` asset imports don't resolve correctly in this IIFE lib build,
 // so derive the worker's URL from wherever this script itself was loaded from
@@ -30,6 +32,12 @@ export interface LightboxItem {
   page?: number;
   highlightTerms?: string[];
   isMatch?: boolean;
+  // The raw, unrendered source text and the scan collection it belongs to —
+  // only present for scan pages, and only needed so the edit panel has
+  // something to save back to `${restRoot}scan/edit`. Absent (e.g. chat
+  // transcripts, xlsx rows) means this item isn't editable.
+  collection?: string;
+  rawText?: string;
 }
 
 interface HighlightRect {
@@ -66,6 +74,10 @@ export class Lightbox {
   private highlightRects: HighlightRect[] = [];
   private hiddenPanel: 'img' | 'text' | null = null;
   private showingAltText = false;
+  private editing = false;
+  private saving = false;
+
+  constructor(private readonly cfg: FavConfig) {}
 
   // Prefer the original publisher/repository URL over our own hosted copy for
   // "open externally" actions (navigation, not the in-page PDF.js render,
@@ -161,6 +173,9 @@ export class Lightbox {
           <button class="fav-lb-btn fav-lb-icon fav-lb-toggle-text" title="Tekst tonen/verbergen">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
           </button>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-edit" title="Tekst bewerken" style="display:none">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          </button>
           <button class="fav-lb-btn fav-lb-icon fav-lb-fullscreen" title="Volledig scherm">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
           </button>
@@ -192,6 +207,14 @@ export class Lightbox {
             <button class="fav-lb-zbtn fav-lb-format-toggle" style="display:none;width:auto;padding:0 .5em" title="Wissel tussen opgemaakte en platte tekstweergave"></button>
           </div>
           <div class="fav-lb-text-content"></div>
+          <div class="fav-lb-edit-wrap" style="display:none">
+            <textarea class="fav-lb-edit-textarea" spellcheck="true" lang="nl"></textarea>
+            <div class="fav-lb-edit-bar">
+              <span class="fav-lb-edit-status"></span>
+              <button class="fav-lb-btn fav-lb-edit-cancel">Annuleren</button>
+              <button class="fav-lb-btn fav-lb-btn-primary fav-lb-edit-save">Opslaan</button>
+            </div>
+          </div>
         </div>
       </div>`;
 
@@ -212,6 +235,10 @@ export class Lightbox {
 
     this.el.querySelector('.fav-lb-toggle-img')!.addEventListener('click', () => this.togglePanel('img'));
     this.el.querySelector('.fav-lb-toggle-text')!.addEventListener('click', () => this.togglePanel('text'));
+
+    this.el.querySelector('.fav-lb-edit')!.addEventListener('click', () => this.enterEditMode());
+    this.el.querySelector('.fav-lb-edit-cancel')!.addEventListener('click', () => this.exitEditMode());
+    this.el.querySelector('.fav-lb-edit-save')!.addEventListener('click', () => void this.saveEdit());
 
     this.el.querySelector('.fav-lb-fullscreen')!.addEventListener('click', () => {
       if (document.fullscreenElement) void document.exitFullscreen();
@@ -483,6 +510,14 @@ export class Lightbox {
     const el = this.el!;
     const token = ++this.showToken;
 
+    // A page navigation always leaves edit mode — an in-progress edit on
+    // the previous page shouldn't silently carry over to this one.
+    this.editing = false;
+    (el.querySelector('.fav-lb-edit-wrap') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-text-content') as HTMLElement).style.display = '';
+    const editBtn = el.querySelector('.fav-lb-edit') as HTMLButtonElement;
+    editBtn.style.display = this.cfg.canEdit && item.collection != null && item.page != null ? '' : 'none';
+
     const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
     const loadingEl = el.querySelector('.fav-lb-loading') as HTMLElement;
     const imgOuterEl = el.querySelector('.fav-lb-img-outer') as HTMLElement;
@@ -587,6 +622,66 @@ export class Lightbox {
       toggleBtn.textContent = this.showingAltText ? 'Opgemaakt' : 'Platte tekst';
     } else {
       toggleBtn.style.display = 'none';
+    }
+  }
+
+  private enterEditMode(): void {
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    this.editing = true;
+    if (this.hiddenPanel === 'text') this.togglePanel('text');
+    (el.querySelector('.fav-lb-text-content') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-edit-wrap') as HTMLElement).style.display = 'flex';
+    const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+    textarea.value = item.rawText ?? '';
+    (el.querySelector('.fav-lb-edit-status') as HTMLElement).textContent = '';
+    textarea.focus();
+  }
+
+  private exitEditMode(): void {
+    const el = this.el!;
+    this.editing = false;
+    (el.querySelector('.fav-lb-edit-wrap') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-text-content') as HTMLElement).style.display = '';
+  }
+
+  private async saveEdit(): Promise<void> {
+    if (this.saving) return;
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+    const statusEl = el.querySelector('.fav-lb-edit-status') as HTMLElement;
+    const saveBtn = el.querySelector('.fav-lb-edit-save') as HTMLButtonElement;
+
+    this.saving = true;
+    saveBtn.disabled = true;
+    statusEl.textContent = 'Opslaan…';
+    try {
+      const res = await fetch(`${this.cfg.restRoot}scan/edit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
+        body: JSON.stringify({ collection: item.collection, page_number: item.page, text: textarea.value }),
+      });
+      const data = await res.json().catch(() => ({})) as { text?: string; text_format?: string; message?: string };
+      if (!res.ok) {
+        statusEl.textContent = data.message || 'Opslaan mislukt.';
+        return;
+      }
+      const text = data.text ?? textarea.value;
+      const isMd = data.text_format === 'md' || looksLikeMarkdown(text);
+      item.rawText = text;
+      item.text = isMd ? renderMarkdown(text) : renderPlain(text);
+      item.textAlt = isMd ? renderPlain(text) : renderMarkdown(text);
+      this.showingAltText = false;
+      this.exitEditMode();
+      this.renderTextContent();
+    } catch {
+      statusEl.textContent = 'Opslaan mislukt.';
+    } finally {
+      this.saving = false;
+      saveBtn.disabled = false;
     }
   }
 

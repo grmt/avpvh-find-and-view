@@ -140,7 +140,7 @@ function initInstance(cfg: FavConfig): void {
   });
 
   // Lightbox — created early so BrowseMode can reference it
-  const lb = cfg.showMedia ? new Lightbox() : null;
+  const lb = cfg.showMedia ? new Lightbox(cfg) : null;
 
   // Browse mode — activated when search box is empty. Typing is itself a form
   // of filtering, so an empty query shows top-level browse overviews (media
@@ -820,8 +820,8 @@ function initInstance(cfg: FavConfig): void {
               ? Array.from(new Set(Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean)))
               : [];
             return isPdf
-              ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text: html, textAlt: htmlAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch }
-              : { url: h.url, caption, text: html, textAlt: htmlAlt, isMatch, ...(hasImage ? {} : { kind: 'text' as const }) };
+              ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text: html, textAlt: htmlAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch, collection: h.collection, rawText: h.text }
+              : { url: h.url, caption, text: html, textAlt: htmlAlt, isMatch, collection: h.collection, rawText: h.text, page: h.page_number ?? undefined, ...(hasImage ? {} : { kind: 'text' as const }) };
           });
 
           const startIdx = allHits.findIndex(h => h.id === hitId);
