@@ -211,6 +211,7 @@ export class Lightbox {
             <textarea class="fav-lb-edit-textarea" spellcheck="true" lang="nl"></textarea>
             <div class="fav-lb-edit-bar">
               <span class="fav-lb-edit-status"></span>
+              <button class="fav-lb-btn fav-lb-edit-ocr" title="Vervang de tekst hieronder door een nieuwe OCR-poging op het scanbeeld">OCR opnieuw</button>
               <button class="fav-lb-btn fav-lb-edit-cancel">Annuleren</button>
               <button class="fav-lb-btn fav-lb-btn-primary fav-lb-edit-save">Opslaan</button>
             </div>
@@ -239,6 +240,7 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-edit')!.addEventListener('click', () => this.enterEditMode());
     this.el.querySelector('.fav-lb-edit-cancel')!.addEventListener('click', () => this.exitEditMode());
     this.el.querySelector('.fav-lb-edit-save')!.addEventListener('click', () => void this.saveEdit());
+    this.el.querySelector('.fav-lb-edit-ocr')!.addEventListener('click', () => void this.reOcr());
 
     this.el.querySelector('.fav-lb-fullscreen')!.addEventListener('click', () => {
       if (document.fullscreenElement) void document.exitFullscreen();
@@ -682,6 +684,41 @@ export class Lightbox {
     } finally {
       this.saving = false;
       saveBtn.disabled = false;
+    }
+  }
+
+  private async reOcr(): Promise<void> {
+    if (this.saving) return;
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+    const statusEl = el.querySelector('.fav-lb-edit-status') as HTMLElement;
+    const ocrBtn = el.querySelector('.fav-lb-edit-ocr') as HTMLButtonElement;
+
+    if (textarea.value.trim() && !confirm('De huidige tekst in het vak vervangen door een nieuwe OCR-poging?')) return;
+
+    this.saving = true;
+    ocrBtn.disabled = true;
+    statusEl.textContent = 'OCR bezig…';
+    try {
+      const res = await fetch(`${this.cfg.restRoot}scan/ocr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
+        body: JSON.stringify({ collection: item.collection, page_number: item.page }),
+      });
+      const data = await res.json().catch(() => ({})) as { text?: string; message?: string };
+      if (!res.ok) {
+        statusEl.textContent = data.message || 'OCR mislukt.';
+        return;
+      }
+      textarea.value = data.text ?? '';
+      statusEl.textContent = 'OCR klaar — nog niet opgeslagen.';
+    } catch {
+      statusEl.textContent = 'OCR mislukt.';
+    } finally {
+      this.saving = false;
+      ocrBtn.disabled = false;
     }
   }
 

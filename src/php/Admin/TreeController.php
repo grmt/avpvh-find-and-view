@@ -4,6 +4,7 @@ namespace Avpvh\FindAndView\Admin;
 
 use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Index\XlsxIndexer;
+use Avpvh\FindAndView\Ocr\DocumentAiClient;
 use Avpvh\FindAndView\Settings;
 use Meilisearch\Contracts\DocumentsQuery;
 
@@ -82,6 +83,15 @@ final class TreeController {
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
 				'text'        => [ 'required' => true, 'type' => 'string' ],
+			],
+		] );
+		register_rest_route( 'avpvh-fav/v1', '/scan/ocr', [
+			'methods'             => 'POST',
+			'callback'            => [ $this, 'ocr_scan_page' ],
+			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'args'                => [
+				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'page_number' => [ 'required' => true, 'type' => 'integer' ],
 			],
 		] );
 		register_rest_route( 'avpvh-fav/v1', '/tree/mkdir', [
@@ -308,6 +318,35 @@ final class TreeController {
 		$client->waitForTask( $task['taskUid'], 30000 );
 
 		return new \WP_REST_Response( [ 'ok' => true, 'text' => $doc['text'], 'text_format' => $doc['text_format'] ] );
+	}
+
+	/**
+	 * Re-OCRs one page's scan image via Document AI and returns the text for
+	 * review in the edit textarea — it does NOT touch the page's text file
+	 * or Meilisearch itself; the user still has to click Save afterwards,
+	 * same as any other edit.
+	 */
+	public function ocr_scan_page( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$collection  = (string) $req->get_param( 'collection' );
+		$page_number = (int) $req->get_param( 'page_number' );
+
+		$dir = $this->safe_path( $collection );
+		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+
+		$image = null;
+		foreach ( scandir( $dir ) as $entry ) {
+			if ( preg_match( '/^page_(\d+)\.(png|jpe?g)$/i', $entry, $m ) !== 1 ) continue;
+			if ( (int) $m[1] !== $page_number ) continue;
+			$image = $dir . '/' . $entry;
+			break;
+		}
+		if ( $image === null ) return new \WP_Error( 'no_image', 'Paginabeeld niet gevonden', [ 'status' => 404 ] );
+
+		$mime = strtolower( (string) pathinfo( $image, PATHINFO_EXTENSION ) ) === 'png' ? 'image/png' : 'image/jpeg';
+		$text = DocumentAiClient::ocr_image( (string) file_get_contents( $image ), $mime );
+		if ( is_wp_error( $text ) ) return $text;
+
+		return new \WP_REST_Response( [ 'text' => $text ] );
 	}
 
 	public function reindex_content(): \WP_REST_Response|\WP_Error {
