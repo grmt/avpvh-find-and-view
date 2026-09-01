@@ -22,6 +22,49 @@ final class DocumentAiClient {
 	 * OCRs one page image and returns the extracted text.
 	 */
 	public static function ocr_image( string $image_bytes, string $mime_type ): string|\WP_Error {
+		$doc = self::process_document( $image_bytes, $mime_type );
+		if ( is_wp_error( $doc ) ) return $doc;
+		return (string) ( $doc['text'] ?? '' );
+	}
+
+	/**
+	 * OCRs an image and reconstructs the text by sorting individual
+	 * detected lines top-to-bottom, left-to-right, rather than trusting
+	 * Document AI's own text order — more reliable for a small cropped
+	 * snippet (e.g. one column of a multi-column layout, a table cell)
+	 * than the whole-page reading order. Mirrors the "smart multi-column
+	 * line sorter" from the local local_editor_server.py's crop-OCR.
+	 */
+	public static function ocr_image_sorted( string $image_bytes, string $mime_type ): string|\WP_Error {
+		$doc = self::process_document( $image_bytes, $mime_type );
+		if ( is_wp_error( $doc ) ) return $doc;
+
+		$full_text = (string) ( $doc['text'] ?? '' );
+		$lines = [];
+		foreach ( (array) ( $doc['pages'] ?? [] ) as $page ) {
+			foreach ( (array) ( $page['lines'] ?? [] ) as $line ) {
+				$text = '';
+				// startIndex/endIndex are UTF-8 byte offsets into $full_text,
+				// so a byte-oriented substr() — not mb_substr() — is correct.
+				foreach ( (array) ( $line['layout']['textAnchor']['textSegments'] ?? [] ) as $seg ) {
+					$start = (int) ( $seg['startIndex'] ?? 0 );
+					$end   = (int) ( $seg['endIndex'] ?? 0 );
+					$text .= substr( $full_text, $start, $end - $start );
+				}
+				$text = trim( $text );
+				if ( $text === '' ) continue;
+				$vertices = $line['layout']['boundingPoly']['normalizedVertices'] ?? [];
+				$lines[] = [ (float) ( $vertices[0]['y'] ?? 0 ), (float) ( $vertices[0]['x'] ?? 0 ), $text ];
+			}
+		}
+		if ( ! $lines ) return trim( $full_text );
+
+		usort( $lines, static fn( $a, $b ) => $a[0] <=> $b[0] ?: $a[1] <=> $b[1] );
+		return implode( "\n", array_column( $lines, 2 ) );
+	}
+
+	/** Calls Document AI's process endpoint and returns the decoded `document` object. */
+	private static function process_document( string $image_bytes, string $mime_type ): array|\WP_Error {
 		$token = self::access_token();
 		if ( is_wp_error( $token ) ) return $token;
 
@@ -55,7 +98,7 @@ final class DocumentAiClient {
 			return new \WP_Error( 'docai_error', $message, [ 'status' => 502 ] );
 		}
 
-		return (string) ( $body['document']['text'] ?? '' );
+		return (array) ( $body['document'] ?? [] );
 	}
 
 	/**

@@ -207,3 +207,26 @@
 .fav-lb-zbtn.fav-lb-active { background: #ffd166; border-color: #e0a800; }
 .fav-lb-text-content.fav-lb-mono, .fav-lb-text-content.fav-lb-mono p { font-family: ui-monospace, SFMono-Regular, Consolas, 'Courier New', monospace; }
 .fav-lb-iz { position: absolute; bottom: .5em; right: .5em; display: flex; gap: .3em; }
+
+/* Crop-select-and-OCR — controls anchored top-left on the scan, per spec */
+.fav-lb-crop-tools { position: absolute; top: .5em; left: .5em; z-index: 5; }
+.fav-lb-crop-tools .fav-lb-btn { background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.3); color: #fff; font-size: .8em; padding: .4em .7em; border-radius: 4px; }
+.fav-lb-crop-tools .fav-lb-btn:hover { background: rgba(0,0,0,.75); }
+.fav-lb-crop-tools .fav-lb-btn.fav-lb-active { background: #ffd166; border-color: #e0a800; color: #222; }
+.fav-lb-img-outer.fav-lb-crop-active .fav-lb-img-wrap { cursor: crosshair; }
+.fav-lb-crop-rect { position: absolute; border: 2px dashed #ffd166; background: rgba(255, 209, 102, .18); pointer-events: none; z-index: 4; }
+.fav-lb-crop-result {
+  position: absolute; top: .5em; left: .5em; z-index: 6;
+  width: 22em; max-width: calc(100% - 2em); max-height: calc(100% - 2em);
+  display: flex; flex-direction: column;
+  background: #fff; color: #333; border-radius: 6px; box-shadow: 0 4px 20px rgba(0,0,0,.4); overflow: hidden;
+}
+.fav-lb-crop-result-header { display: flex; align-items: center; justify-content: space-between; padding: .5em .7em; background: #f5f5f5; border-bottom: 1px solid #e0e0e0; font-size: .8em; font-weight: 600; flex-shrink: 0; }
+.fav-lb-crop-result-header .fav-lb-btn { background: none; border: none; color: #666; font-size: 1.3em; padding: 0 .3em; line-height: 1; }
+.fav-lb-crop-result-header .fav-lb-btn:hover { background: #eee; }
+.fav-lb-crop-preview { display: block; width: 100%; max-height: 8em; object-fit: contain; background: #222; flex-shrink: 0; }
+.fav-lb-crop-text { flex: 1; min-height: 5em; resize: vertical; border: none; border-top: 1px solid #eee; outline: none; padding: .6em .7em; font-size: .8em; line-height: 1.5; color: #333; font-family: Georgia, 'Times New Roman', serif; }
+.fav-lb-crop-result-bar { display: flex; align-items: center; gap: .5em; padding: .5em .7em; border-top: 1px solid #e0e0e0; background: #f5f5f5; flex-shrink: 0; }
+.fav-lb-crop-status { margin-right: auto; font-size: .75em; color: #888; }
+.fav-lb-crop-result-bar .fav-lb-btn { background: #0073aa; border: 1px solid #0073aa; color: #fff; font-size: .8em; padding: .4em .8em; border-radius: 4px; }
+.fav-lb-crop-result-bar .fav-lb-btn:hover { background: #005d8a; }

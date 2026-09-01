@@ -110,6 +110,8 @@ export class Lightbox {
   // txtZoom — a reader who wants monospace for aligned OCR columns almost
   // certainly wants it for every page of this document, not just one.
   private monoFont = false;
+  private cropMode = false;
+  private cropDragStart: { x: number; y: number } | null = null;
   private editing = false;
   private saving = false;
 
@@ -327,6 +329,22 @@ export class Lightbox {
             <button class="fav-lb-zbtn">&#x2212;</button>
             <button class="fav-lb-zbtn">1:1</button>
             <button class="fav-lb-zbtn">+</button>
+          </div>
+          <div class="fav-lb-crop-tools" style="display:none">
+            <button class="fav-lb-btn fav-lb-crop-toggle" title="Selecteer een stukje van het scanbeeld om alleen dat te laten her-OCR'en">&#9986; Selecteren</button>
+          </div>
+          <div class="fav-lb-crop-rect" style="display:none"></div>
+          <div class="fav-lb-crop-result" style="display:none">
+            <div class="fav-lb-crop-result-header">
+              <span>OCR-resultaat van selectie</span>
+              <button class="fav-lb-btn fav-lb-crop-close">&times;</button>
+            </div>
+            <img class="fav-lb-crop-preview" alt="Selectie">
+            <textarea class="fav-lb-crop-text" spellcheck="true" lang="nl"></textarea>
+            <div class="fav-lb-crop-result-bar">
+              <span class="fav-lb-crop-status"></span>
+              <button class="fav-lb-btn fav-lb-crop-insert">Invoegen in tekst</button>
+            </div>
           </div>
         </div>
         <div class="fav-lb-resizer"></div>
@@ -556,7 +574,7 @@ export class Lightbox {
     let dragPanStartY = 0;
     imgWrapEl.addEventListener('pointerdown', (e: Event) => {
       const pe = e as PointerEvent;
-      if (pe.pointerType !== 'mouse' || this.imgZoom <= 1.01) return;
+      if (pe.pointerType !== 'mouse' || this.imgZoom <= 1.01 || this.cropMode) return;
       dragging = true;
       dragStartX = pe.clientX;
       dragStartY = pe.clientY;
@@ -582,6 +600,7 @@ export class Lightbox {
     imgWrapEl.addEventListener('pointerup', stopDragPan);
     imgWrapEl.addEventListener('pointercancel', stopDragPan);
 
+    this.setupCropSelect();
     this.setupResizer();
 
     document.addEventListener('keydown', this.keyHandler);
@@ -618,6 +637,106 @@ export class Lightbox {
   // Lets the user drag the bar between the image and text panels instead of
   // being stuck with a fixed split — persisted per-orientation so it stays
   // put across pages and future opens, not just the current view.
+  // Drag-select a rectangle on the scan image, then OCR just that region
+  // via Document AI — for a small snippet the model missed or garbled on
+  // the full page. Draws in plain screen coordinates against
+  // .fav-lb-img-outer (never transformed), independent of the image's own
+  // pan/zoom, so no transform math is needed here at all.
+  private setupCropSelect(): void {
+    const el = this.el!;
+    const imgOuterEl = el.querySelector('.fav-lb-img-outer') as HTMLElement;
+    const cropRectEl = el.querySelector('.fav-lb-crop-rect') as HTMLElement;
+    const cropToggleBtn = el.querySelector('.fav-lb-crop-toggle') as HTMLButtonElement;
+
+    cropToggleBtn.addEventListener('click', () => {
+      this.cropMode = !this.cropMode;
+      cropToggleBtn.classList.toggle('fav-lb-active', this.cropMode);
+      imgOuterEl.classList.toggle('fav-lb-crop-active', this.cropMode);
+      if (!this.cropMode) cropRectEl.style.display = 'none';
+    });
+
+    imgOuterEl.addEventListener('pointerdown', (e: Event) => {
+      if (!this.cropMode) return;
+      const pe = e as PointerEvent;
+      const rect = imgOuterEl.getBoundingClientRect();
+      this.cropDragStart = { x: pe.clientX - rect.left, y: pe.clientY - rect.top };
+      Object.assign(cropRectEl.style, { left: `${this.cropDragStart.x}px`, top: `${this.cropDragStart.y}px`, width: '0px', height: '0px', display: 'block' });
+      imgOuterEl.setPointerCapture(pe.pointerId);
+      e.preventDefault();
+    });
+    imgOuterEl.addEventListener('pointermove', (e: Event) => {
+      if (!this.cropMode || !this.cropDragStart) return;
+      const pe = e as PointerEvent;
+      const rect = imgOuterEl.getBoundingClientRect();
+      const curX = pe.clientX - rect.left;
+      const curY = pe.clientY - rect.top;
+      Object.assign(cropRectEl.style, {
+        left: `${Math.min(this.cropDragStart.x, curX)}px`,
+        top: `${Math.min(this.cropDragStart.y, curY)}px`,
+        width: `${Math.abs(curX - this.cropDragStart.x)}px`,
+        height: `${Math.abs(curY - this.cropDragStart.y)}px`,
+      });
+    });
+    const finishCropDrag = (e: Event): void => {
+      if (!this.cropMode || !this.cropDragStart) return;
+      const pe = e as PointerEvent;
+      if (imgOuterEl.hasPointerCapture(pe.pointerId)) imgOuterEl.releasePointerCapture(pe.pointerId);
+      this.cropDragStart = null;
+      void this.finishCropSelection();
+    };
+    imgOuterEl.addEventListener('pointerup', finishCropDrag);
+    imgOuterEl.addEventListener('pointercancel', () => { this.cropDragStart = null; cropRectEl.style.display = 'none'; });
+
+    el.querySelector('.fav-lb-crop-close')!.addEventListener('click', () => {
+      (el.querySelector('.fav-lb-crop-result') as HTMLElement).style.display = 'none';
+    });
+    el.querySelector('.fav-lb-crop-insert')!.addEventListener('click', () => {
+      const cropText = (el.querySelector('.fav-lb-crop-text') as HTMLTextAreaElement).value;
+      if (!cropText) return;
+      if (!this.editing) this.enterEditMode();
+      const ta = this.editTextarea();
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      this.setTextareaValue(ta, ta.value.slice(0, start) + cropText + ta.value.slice(end), start, start + cropText.length);
+      (el.querySelector('.fav-lb-crop-result') as HTMLElement).style.display = 'none';
+    });
+  }
+
+  private async finishCropSelection(): Promise<void> {
+    const el = this.el!;
+    const item = this.items[this.idx];
+    const cropRectEl = el.querySelector('.fav-lb-crop-rect') as HTMLElement;
+    const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
+    cropRectEl.style.display = 'none';
+    if (!item || item.collection == null || item.page == null) return;
+
+    const rectBox = cropRectEl.getBoundingClientRect();
+    const imgBox = imgEl.getBoundingClientRect();
+    if (rectBox.width < 8 || rectBox.height < 8 || imgBox.width === 0 || imgBox.height === 0) return;
+
+    const x = (rectBox.left - imgBox.left) / imgBox.width;
+    const y = (rectBox.top - imgBox.top) / imgBox.height;
+    const w = rectBox.width / imgBox.width;
+    const h = rectBox.height / imgBox.height;
+
+    const resultEl = el.querySelector('.fav-lb-crop-result') as HTMLElement;
+    const previewEl = el.querySelector('.fav-lb-crop-preview') as HTMLImageElement;
+    const textEl = el.querySelector('.fav-lb-crop-text') as HTMLTextAreaElement;
+    const statusEl = el.querySelector('.fav-lb-crop-status') as HTMLElement;
+    resultEl.style.display = 'flex';
+    previewEl.removeAttribute('src');
+    textEl.value = '';
+    statusEl.textContent = 'OCR bezig…';
+
+    const { ok, data } = await this.restPost<{ text?: string; crop_img_url?: string }>(
+      'scan/crop-ocr', { collection: item.collection, page_number: item.page, crop: { x, y, w, h } },
+    );
+    if (!ok) { statusEl.textContent = data.message || 'OCR mislukt.'; return; }
+    previewEl.src = data.crop_img_url ?? '';
+    textEl.value = data.text ?? '';
+    statusEl.textContent = '';
+  }
+
   private setupResizer(): void {
     const el = this.el!;
     const resizer = el.querySelector('.fav-lb-resizer') as HTMLElement;
@@ -704,6 +823,15 @@ export class Lightbox {
     el.querySelector('.fav-lb-search-panel')?.classList.remove('fav-open');
     el.querySelector('.fav-lb-history-panel')?.classList.remove('fav-open');
 
+    // A page navigation also always leaves crop-select mode and clears any
+    // pending crop result — both are tied to whichever image is on screen.
+    this.cropMode = false;
+    this.cropDragStart = null;
+    (el.querySelector('.fav-lb-crop-toggle') as HTMLElement).classList.remove('fav-lb-active');
+    (el.querySelector('.fav-lb-img-outer') as HTMLElement).classList.remove('fav-lb-crop-active');
+    (el.querySelector('.fav-lb-crop-rect') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-crop-result') as HTMLElement).style.display = 'none';
+
     const isEditablePage = item.collection != null && item.page != null;
     const editBtn = el.querySelector('.fav-lb-edit') as HTMLButtonElement;
     editBtn.style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
@@ -731,6 +859,8 @@ export class Lightbox {
     const hasImage = item.kind !== 'text';
     toggleImgBtn.style.display = hasImage ? '' : 'none';
     toggleTextBtn.style.display = hasImage ? '' : 'none';
+    (el.querySelector('.fav-lb-crop-tools') as HTMLElement).style.display =
+      this.cfg.canEdit && isEditablePage && hasImage ? '' : 'none';
 
     const textWrapEl = el.querySelector('.fav-lb-text-wrap') as HTMLElement;
     const resizerEl = el.querySelector('.fav-lb-resizer') as HTMLElement;

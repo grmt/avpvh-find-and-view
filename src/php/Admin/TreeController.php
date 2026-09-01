@@ -94,6 +94,16 @@ final class TreeController {
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
 			],
 		] );
+		register_rest_route( 'avpvh-fav/v1', '/scan/crop-ocr', [
+			'methods'             => 'POST',
+			'callback'            => [ $this, 'crop_ocr_scan_page' ],
+			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'args'                => [
+				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'page_number' => [ 'required' => true, 'type' => 'integer' ],
+				'crop'        => [ 'required' => true, 'type' => 'object' ],
+			],
+		] );
 		register_rest_route( 'avpvh-fav/v1', '/scan/history', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'scan_history' ],
@@ -583,6 +593,63 @@ final class TreeController {
 		if ( is_wp_error( $text ) ) return $text;
 
 		return new \WP_REST_Response( [ 'text' => $text ] );
+	}
+
+	/**
+	 * Crops a page image to a normalized {x,y,w,h} rectangle (fractions of
+	 * the full image, 0-1) and OCRs just that region via Document AI's
+	 * multi-column line-sorted extraction. Returns the text plus a data-URL
+	 * preview of exactly what was sent, for the editor to confirm before
+	 * inserting it — never touches the page's text file itself.
+	 */
+	public function crop_ocr_scan_page( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$collection  = (string) $req->get_param( 'collection' );
+		$page_number = (int) $req->get_param( 'page_number' );
+		$crop        = (array) $req->get_param( 'crop' );
+
+		$dir = $this->safe_path( $collection );
+		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$image_path = $this->resolve_page_file( $dir, $page_number, 'png|jpe?g' );
+		if ( $image_path === null ) return new \WP_Error( 'no_image', 'Paginabeeld niet gevonden', [ 'status' => 404 ] );
+
+		$x = (float) ( $crop['x'] ?? 0 );
+		$y = (float) ( $crop['y'] ?? 0 );
+		$w = (float) ( $crop['w'] ?? 0 );
+		$h = (float) ( $crop['h'] ?? 0 );
+		if ( $w <= 0 || $h <= 0 ) return new \WP_Error( 'bad_crop', 'Ongeldige selectie', [ 'status' => 400 ] );
+
+		$src = @imagecreatefromstring( (string) file_get_contents( $image_path ) );
+		if ( ! $src ) return new \WP_Error( 'bad_image', 'Kon paginabeeld niet lezen', [ 'status' => 500 ] );
+
+		$img_w = imagesx( $src );
+		$img_h = imagesy( $src );
+		$x1 = (int) max( 0, $x * $img_w );
+		$y1 = (int) max( 0, $y * $img_h );
+		$x2 = (int) min( $img_w, ( $x + $w ) * $img_w );
+		$y2 = (int) min( $img_h, ( $y + $h ) * $img_h );
+		$crop_w = $x2 - $x1;
+		$crop_h = $y2 - $y1;
+		if ( $crop_w < 10 || $crop_h < 10 ) {
+			imagedestroy( $src );
+			return new \WP_Error( 'crop_too_small', 'Selectie is te klein', [ 'status' => 400 ] );
+		}
+
+		$cropped = imagecrop( $src, [ 'x' => $x1, 'y' => $y1, 'width' => $crop_w, 'height' => $crop_h ] );
+		imagedestroy( $src );
+		if ( ! $cropped ) return new \WP_Error( 'crop_failed', 'Uitsnijden mislukt', [ 'status' => 500 ] );
+
+		ob_start();
+		imagepng( $cropped );
+		$png_bytes = (string) ob_get_clean();
+		imagedestroy( $cropped );
+
+		$text = DocumentAiClient::ocr_image_sorted( $png_bytes, 'image/png' );
+		if ( is_wp_error( $text ) ) return $text;
+
+		return new \WP_REST_Response( [
+			'text'         => $text,
+			'crop_img_url' => 'data:image/png;base64,' . base64_encode( $png_bytes ),
+		] );
 	}
 
 	public function reindex_content(): \WP_REST_Response|\WP_Error {
