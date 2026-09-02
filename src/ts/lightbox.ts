@@ -332,6 +332,10 @@ export class Lightbox {
           </div>
           <div class="fav-lb-crop-tools" style="display:none">
             <button class="fav-lb-btn fav-lb-crop-toggle" title="Selecteer een stukje van het scanbeeld om alleen dat te laten her-OCR'en">&#9986; Selecteren</button>
+            <select class="fav-lb-crop-engine" title="OCR-engine">
+              <option value="docai">Document AI</option>
+              <option value="tesseract">Tesseract (lokaal, minder nauwkeurig)</option>
+            </select>
           </div>
           <div class="fav-lb-crop-rect" style="display:none"></div>
           <div class="fav-lb-crop-result" style="display:none">
@@ -719,20 +723,24 @@ export class Lightbox {
     const w = rectBox.width / imgBox.width;
     const h = rectBox.height / imgBox.height;
 
+    const engine = (el.querySelector('.fav-lb-crop-engine') as HTMLSelectElement).value;
     const resultEl = el.querySelector('.fav-lb-crop-result') as HTMLElement;
     const previewEl = el.querySelector('.fav-lb-crop-preview') as HTMLImageElement;
     const textEl = el.querySelector('.fav-lb-crop-text') as HTMLTextAreaElement;
     const statusEl = el.querySelector('.fav-lb-crop-status') as HTMLElement;
+    const titleEl = el.querySelector('.fav-lb-crop-result-header span') as HTMLElement;
     resultEl.style.display = 'flex';
     previewEl.removeAttribute('src');
     textEl.value = '';
+    titleEl.textContent = 'OCR-resultaat van selectie';
     statusEl.textContent = 'OCR bezig…';
 
-    const { ok, data } = await this.restPost<{ text?: string; crop_img_url?: string }>(
-      'scan/crop-ocr', { collection: item.collection, page_number: item.page, crop: { x, y, w, h } },
+    const { ok, data } = await this.restPost<{ text?: string; crop_img_url?: string; engine?: string }>(
+      'scan/crop-ocr', { collection: item.collection, page_number: item.page, crop: { x, y, w, h }, engine },
     );
     if (!ok) { statusEl.textContent = data.message || 'OCR mislukt.'; return; }
     previewEl.src = data.crop_img_url ?? '';
+    titleEl.textContent = `OCR-resultaat (${data.engine === 'tesseract' ? 'Tesseract' : 'Document AI'})`;
     textEl.value = data.text ?? '';
     statusEl.textContent = '';
   }

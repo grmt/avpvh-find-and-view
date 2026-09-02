@@ -5,6 +5,7 @@ namespace Avpvh\FindAndView\Admin;
 use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Index\XlsxIndexer;
 use Avpvh\FindAndView\Ocr\DocumentAiClient;
+use Avpvh\FindAndView\Ocr\TesseractClient;
 use Avpvh\FindAndView\Settings;
 use Meilisearch\Contracts\DocumentsQuery;
 
@@ -102,6 +103,7 @@ final class TreeController {
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
 				'crop'        => [ 'required' => true, 'type' => 'object' ],
+				'engine'      => [ 'type' => 'string', 'default' => 'docai', 'enum' => [ 'docai', 'tesseract' ] ],
 			],
 		] );
 		register_rest_route( 'avpvh-fav/v1', '/scan/history', [
@@ -606,6 +608,7 @@ final class TreeController {
 		$collection  = (string) $req->get_param( 'collection' );
 		$page_number = (int) $req->get_param( 'page_number' );
 		$crop        = (array) $req->get_param( 'crop' );
+		$engine      = (string) $req->get_param( 'engine' );
 
 		$dir = $this->safe_path( $collection );
 		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
@@ -643,11 +646,14 @@ final class TreeController {
 		$png_bytes = (string) ob_get_clean();
 		imagedestroy( $cropped );
 
-		$text = DocumentAiClient::ocr_image_sorted( $png_bytes, 'image/png' );
+		$text = $engine === 'tesseract'
+			? TesseractClient::ocr_image( $png_bytes )
+			: DocumentAiClient::ocr_image_sorted( $png_bytes, 'image/png' );
 		if ( is_wp_error( $text ) ) return $text;
 
 		return new \WP_REST_Response( [
 			'text'         => $text,
+			'engine'       => $engine,
 			'crop_img_url' => 'data:image/png;base64,' . base64_encode( $png_bytes ),
 		] );
 	}

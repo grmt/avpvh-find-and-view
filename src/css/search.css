@@ -213,6 +213,7 @@
 .fav-lb-crop-tools .fav-lb-btn { background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.3); color: #fff; font-size: .8em; padding: .4em .7em; border-radius: 4px; }
 .fav-lb-crop-tools .fav-lb-btn:hover { background: rgba(0,0,0,.75); }
 .fav-lb-crop-tools .fav-lb-btn.fav-lb-active { background: #ffd166; border-color: #e0a800; color: #222; }
+.fav-lb-crop-engine { margin-left: .3em; font-size: .78em; padding: .35em .4em; border-radius: 4px; border: 1px solid rgba(255,255,255,.3); background: rgba(0,0,0,.55); color: #fff; }
 .fav-lb-img-outer.fav-lb-crop-active .fav-lb-img-wrap { cursor: crosshair; }
 .fav-lb-crop-rect { position: absolute; border: 2px dashed #ffd166; background: rgba(255, 209, 102, .18); pointer-events: none; z-index: 4; }
 .fav-lb-crop-result {
