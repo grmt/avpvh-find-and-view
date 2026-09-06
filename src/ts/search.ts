@@ -6,6 +6,7 @@ import { Lightbox, type LightboxItem } from './lightbox';
 import { BrowseMode } from './browse';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
+import { showSearchError, hideSearchError } from './meili';
 
 function parseContains(q: string): string {
   return q
@@ -127,7 +128,9 @@ function initInstance(cfg: FavConfig): void {
   search.addWidgets(widgets);
   search.start();
 
+  search.on('error', () => showSearchError(cfg));
   search.on('render', () => {
+    if (search.status !== 'error') hideSearchError(cfg);
     (['media', 'content'] as const).forEach(src => {
       const hitsEl = document.getElementById(`${cfg.uid}-hits-${src}`);
       const pagEl  = document.getElementById(`${cfg.uid}-pag-${src}`);

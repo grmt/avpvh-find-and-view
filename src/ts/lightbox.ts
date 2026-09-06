@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 import type { FavConfig } from './types';
+import { meiliSearch } from './meili';
 
 const DIFF_TOKEN_RE = /\s+|\S+/g;
 
@@ -1270,10 +1271,8 @@ export class Lightbox {
     const item = this.items[this.idx];
     if (query.length < 2 || item?.collection == null) { resultsEl.innerHTML = ''; return; }
 
-    const data = await fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const data = await meiliSearch<{ hits?: Array<{ page_number?: number; _formatted?: { text?: string } }> }>(
+      this.cfg, this.cfg.mediaIndex, {
         q: query,
         filter: `collection = "${item.collection}"`,
         limit: 30,
@@ -1281,8 +1280,10 @@ export class Lightbox {
         attributesToCrop: ['text'],
         cropLength: 24,
         attributesToHighlight: ['text'],
-      }),
-    }).then(r => r.json()) as { hits?: Array<{ page_number?: number; _formatted?: { text?: string } }> };
+      },
+    );
+
+    if (!data) { resultsEl.innerHTML = '<div class="fav-lb-search-empty">Zoeken mislukt.</div>'; return; }
 
     const hits = data.hits ?? [];
     if (!hits.length) {

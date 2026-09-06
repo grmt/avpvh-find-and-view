@@ -1,6 +1,7 @@
 import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
 import type { Lightbox, LightboxItem } from './lightbox';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
+import { meiliSearch } from './meili';
 
 const PAGE_SIZE = 60;
 
@@ -39,7 +40,7 @@ export class BrowseMode {
     // Fetch facets once and cache
     if (!Object.keys(this.allCollections).length) {
       const data = await this.fetchFacets();
-      this.allCollections = data.facetDistribution?.['collection'] ?? {};
+      this.allCollections = data?.facetDistribution?.['collection'] ?? {};
     }
 
     // Determine if path is a leaf collection (has own documents) or a folder prefix
@@ -193,20 +194,16 @@ export class BrowseMode {
     if (!needed.length) return {};
 
     const filter = needed.map(c => `collection = "${c}"`).join(' OR ');
-    const data = await fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        q: '',
-        limit: 1000,
-        filter,
-        attributesToRetrieve: ['collection', 'thumb_url', 'page_number'],
-      }),
-    }).then(r => r.json()) as { hits: MeiliHit[] };
+    const data = await meiliSearch<{ hits: MeiliHit[] }>(this.cfg, this.cfg.mediaIndex, {
+      q: '',
+      limit: 1000,
+      filter,
+      attributesToRetrieve: ['collection', 'thumb_url', 'page_number'],
+    });
 
     // Up to 6 thumbs per collection, sorted by page_number asc
     const colThumbs: Record<string, string[]> = {};
-    const hits = (data.hits ?? []).filter(h => h.thumb_url).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+    const hits = (data?.hits ?? []).filter(h => h.thumb_url).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
     for (const hit of hits) {
       if (!colThumbs[hit.collection]) colThumbs[hit.collection] = [];
       if (colThumbs[hit.collection].length < 6) colThumbs[hit.collection].push(hit.thumb_url!);
@@ -229,12 +226,8 @@ export class BrowseMode {
     return result;
   }
 
-  private async fetchFacets(): Promise<{ facetDistribution?: Record<string, Record<string, number>> }> {
-    return fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: '', limit: 0, facets: ['collection'] }),
-    }).then(r => r.json());
+  private async fetchFacets(): Promise<{ facetDistribution?: Record<string, Record<string, number>> } | null> {
+    return meiliSearch(this.cfg, this.cfg.mediaIndex, { q: '', limit: 0, facets: ['collection'] });
   }
 
   private async renderCollection(name: string, reset = true): Promise<void> {
@@ -248,17 +241,15 @@ export class BrowseMode {
       this.gridEl.querySelector('.fav-load-more')?.remove();
     }
 
-    const data = await fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        q: '',
-        filter: `collection = "${name}"`,
-        limit: PAGE_SIZE,
-        offset: this.loadMoreOffset,
-        attributesToRetrieve: ['id', 'url', 'thumb_url', 'title', 'page_number', 'date', 'collection'],
-      }),
-    }).then(r => r.json()) as { hits: MeiliHit[]; estimatedTotalHits: number };
+    const data = await meiliSearch<{ hits: MeiliHit[]; estimatedTotalHits: number }>(this.cfg, this.cfg.mediaIndex, {
+      q: '',
+      filter: `collection = "${name}"`,
+      limit: PAGE_SIZE,
+      offset: this.loadMoreOffset,
+      attributesToRetrieve: ['id', 'url', 'thumb_url', 'title', 'page_number', 'date', 'collection'],
+    });
+
+    if (!data) { this.gridEl.innerHTML = ''; return; }
 
     const hits = (data.hits ?? []).sort(compareHitOrder);
     const total = data.estimatedTotalHits ?? 0;
@@ -305,16 +296,13 @@ export class BrowseMode {
       e.preventDefault();
       const hitId = link.dataset['id'] ?? '';
 
-      const data = await fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          q: '',
-          filter: `collection = "${collection}"`,
-          limit: 5000,
-          attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
-        }),
-      }).then(r => r.json()) as { hits: MeiliHit[] };
+      const data = await meiliSearch<{ hits: MeiliHit[] }>(this.cfg, this.cfg.mediaIndex, {
+        q: '',
+        filter: `collection = "${collection}"`,
+        limit: 5000,
+        attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
+      });
+      if (!data) return;
 
       const allHits = (data.hits ?? [])
         .filter(h => h.url)
