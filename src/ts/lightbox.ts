@@ -658,11 +658,18 @@ export class Lightbox {
     const engineSelect = el.querySelector('.fav-lb-crop-engine') as HTMLSelectElement;
     const localUrlInput = el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement;
 
+    const savedEngine = localStorage.getItem('avpvhFavOcrEngine');
+    if (savedEngine && ['docai', 'tesseract', 'local'].includes(savedEngine)) {
+      engineSelect.value = savedEngine;
+    }
     localUrlInput.value = localStorage.getItem('avpvhFavLocalOcrUrl') || 'http://localhost:5001/v1/convert/file';
+    localUrlInput.style.display = engineSelect.value === 'local' ? '' : 'none';
+
     localUrlInput.addEventListener('change', () => {
       localStorage.setItem('avpvhFavLocalOcrUrl', localUrlInput.value.trim());
     });
     engineSelect.addEventListener('change', () => {
+      localStorage.setItem('avpvhFavOcrEngine', engineSelect.value);
       localUrlInput.style.display = engineSelect.value === 'local' ? '' : 'none';
     });
 
@@ -676,6 +683,7 @@ export class Lightbox {
     imgOuterEl.addEventListener('pointerdown', (e: Event) => {
       if (!this.cropMode) return;
       const pe = e as PointerEvent;
+      if ((pe.target as HTMLElement).closest('.fav-lb-crop-tools, .fav-lb-crop-result, .fav-lb-iz')) return;
       const rect = imgOuterEl.getBoundingClientRect();
       this.cropDragStart = { x: pe.clientX - rect.left, y: pe.clientY - rect.top };
       Object.assign(cropRectEl.style, { left: `${this.cropDragStart.x}px`, top: `${this.cropDragStart.y}px`, width: '0px', height: '0px', display: 'block' });
