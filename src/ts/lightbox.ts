@@ -334,9 +334,12 @@ export class Lightbox {
           <div class="fav-lb-crop-tools" style="display:none">
             <button class="fav-lb-btn fav-lb-crop-toggle" title="Selecteer een stukje van het scanbeeld om alleen dat te laten her-OCR'en">&#9986; Selecteren</button>
             <select class="fav-lb-crop-engine" title="OCR-engine">
-              <option value="docai">Document AI</option>
-              <option value="tesseract">Tesseract (lokaal, minder nauwkeurig)</option>
+              <option value="docai">Document AI (server)</option>
+              <option value="tesseract">Tesseract (server, minder nauwkeurig)</option>
+              <option value="local">Lokale Docker (jouw computer)</option>
             </select>
+            <input class="fav-lb-crop-local-url" type="text" style="display:none" spellcheck="false"
+              title="Adres van de OCR-container die je zelf lokaal draait">
           </div>
           <div class="fav-lb-crop-rect" style="display:none"></div>
           <div class="fav-lb-crop-result" style="display:none">
@@ -652,6 +655,16 @@ export class Lightbox {
     const imgOuterEl = el.querySelector('.fav-lb-img-outer') as HTMLElement;
     const cropRectEl = el.querySelector('.fav-lb-crop-rect') as HTMLElement;
     const cropToggleBtn = el.querySelector('.fav-lb-crop-toggle') as HTMLButtonElement;
+    const engineSelect = el.querySelector('.fav-lb-crop-engine') as HTMLSelectElement;
+    const localUrlInput = el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement;
+
+    localUrlInput.value = localStorage.getItem('avpvhFavLocalOcrUrl') || 'http://localhost:8091/ocr';
+    localUrlInput.addEventListener('change', () => {
+      localStorage.setItem('avpvhFavLocalOcrUrl', localUrlInput.value.trim());
+    });
+    engineSelect.addEventListener('change', () => {
+      localUrlInput.style.display = engineSelect.value === 'local' ? '' : 'none';
+    });
 
     cropToggleBtn.addEventListener('click', () => {
       this.cropMode = !this.cropMode;
@@ -736,6 +749,11 @@ export class Lightbox {
     titleEl.textContent = 'OCR-resultaat van selectie';
     statusEl.textContent = 'OCR bezig…';
 
+    if (engine === 'local') {
+      await this.runLocalOcr(imgEl, x, y, w, h, previewEl, textEl, statusEl, titleEl);
+      return;
+    }
+
     const { ok, data } = await this.restPost<{ text?: string; crop_img_url?: string; engine?: string }>(
       'scan/crop-ocr', { collection: item.collection, page_number: item.page, crop: { x, y, w, h }, engine },
     );
@@ -744,6 +762,46 @@ export class Lightbox {
     titleEl.textContent = `OCR-resultaat (${data.engine === 'tesseract' ? 'Tesseract' : 'Document AI'})`;
     textEl.value = data.text ?? '';
     statusEl.textContent = '';
+  }
+
+  // Crops the already-loaded scan image client-side and posts it directly
+  // to an OCR container the admin runs on their own machine — the
+  // production VPS has too little CPU/RAM for a heavier, more accurate
+  // OCR model. Browsers exempt http://localhost from the mixed-content
+  // block even on an https page, so this needs no tunnel or VPN, just
+  // the container actually running (see local-ocr/ in the plugin repo).
+  private async runLocalOcr(
+    imgEl: HTMLImageElement, x: number, y: number, w: number, h: number,
+    previewEl: HTMLImageElement, textEl: HTMLTextAreaElement, statusEl: HTMLElement, titleEl: HTMLElement,
+  ): Promise<void> {
+    const url = (this.el!.querySelector('.fav-lb-crop-local-url') as HTMLInputElement).value.trim();
+    if (!url) { statusEl.textContent = 'Vul eerst het adres van de lokale OCR-container in.'; return; }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(imgEl.naturalWidth * w));
+    canvas.height = Math.max(1, Math.round(imgEl.naturalHeight * h));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { statusEl.textContent = 'Kon selectie niet uitsnijden.'; return; }
+    ctx.drawImage(
+      imgEl,
+      imgEl.naturalWidth * x, imgEl.naturalHeight * y, canvas.width, canvas.height,
+      0, 0, canvas.width, canvas.height,
+    );
+    previewEl.src = canvas.toDataURL('image/png');
+    titleEl.textContent = 'OCR-resultaat (lokale Docker)';
+
+    const blob: Blob | null = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) { statusEl.textContent = 'Kon selectie niet uitsnijden.'; return; }
+
+    try {
+      const res = await fetch(url, { method: 'POST', body: blob });
+      const data = await res.json().catch(() => ({})) as { text?: string; error?: string };
+      if (!res.ok) { statusEl.textContent = data.error || 'Lokale OCR mislukt.'; return; }
+      textEl.value = data.text ?? '';
+      statusEl.textContent = '';
+    } catch {
+      statusEl.textContent = `Kon de lokale OCR-container niet bereiken op ${url}. Draait de container?`;
+    }
   }
 
   private setupResizer(): void {
