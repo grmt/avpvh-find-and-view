@@ -322,7 +322,7 @@ export class Lightbox {
       <div class="fav-lb-body">
         <div class="fav-lb-img-outer">
           <div class="fav-lb-img-wrap">
-            <img class="fav-lb-img" alt="">
+            <img class="fav-lb-img" alt="" draggable="false">
             <div class="fav-lb-highlights"></div>
           </div>
           <div class="fav-lb-loading" style="display:none">Laden…</div>
@@ -482,9 +482,15 @@ export class Lightbox {
 
     this.el.querySelector('.fav-lb-img-wrap')!.addEventListener('wheel', (e: Event) => {
       const we = e as WheelEvent;
-      if (!we.ctrlKey) return;
-      we.preventDefault();
-      this.zoomAt(this.imgZoom * (we.deltaY < 0 ? 1.1 : 0.9), we.clientX, we.clientY);
+      if (we.ctrlKey) {
+        we.preventDefault();
+        this.zoomAt(this.imgZoom * (we.deltaY < 0 ? 1.1 : 0.9), we.clientX, we.clientY);
+      } else if (this.imgZoom > 1.01) {
+        we.preventDefault();
+        this.panX -= we.deltaX;
+        this.panY -= we.deltaY;
+        this.applyImgTransform();
+      }
     }, { passive: false });
 
     this.el.querySelector('.fav-lb-text-content')!.addEventListener('wheel', (e: Event) => {
@@ -582,7 +588,9 @@ export class Lightbox {
     let dragPanStartY = 0;
     imgWrapEl.addEventListener('pointerdown', (e: Event) => {
       const pe = e as PointerEvent;
-      if (pe.pointerType !== 'mouse' || this.imgZoom <= 1.01 || this.cropMode) return;
+      if (pe.pointerType !== 'mouse' || this.imgZoom <= 1.01) return;
+      if (this.cropMode && pe.button === 0) return;
+      pe.preventDefault();
       dragging = true;
       dragStartX = pe.clientX;
       dragStartY = pe.clientY;
@@ -683,6 +691,7 @@ export class Lightbox {
     imgOuterEl.addEventListener('pointerdown', (e: Event) => {
       if (!this.cropMode) return;
       const pe = e as PointerEvent;
+      if (pe.button !== 0) return;
       if ((pe.target as HTMLElement).closest('.fav-lb-crop-tools, .fav-lb-crop-result, .fav-lb-iz')) return;
       const rect = imgOuterEl.getBoundingClientRect();
       this.cropDragStart = { x: pe.clientX - rect.left, y: pe.clientY - rect.top };
