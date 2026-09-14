@@ -725,10 +725,13 @@ export class Lightbox {
     const item = this.items[this.idx];
     const cropRectEl = el.querySelector('.fav-lb-crop-rect') as HTMLElement;
     const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
-    cropRectEl.style.display = 'none';
-    if (!item || item.collection == null || item.page == null) return;
+    if (!item || item.collection == null || item.page == null) {
+      cropRectEl.style.display = 'none';
+      return;
+    }
 
     const rectBox = cropRectEl.getBoundingClientRect();
+    cropRectEl.style.display = 'none';
     const imgBox = imgEl.getBoundingClientRect();
     if (rectBox.width < 8 || rectBox.height < 8 || imgBox.width === 0 || imgBox.height === 0) return;
 
