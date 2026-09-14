@@ -583,6 +583,7 @@ final class TreeController {
 	public function ocr_scan_page( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
 		$collection  = (string) $req->get_param( 'collection' );
 		$page_number = (int) $req->get_param( 'page_number' );
+		$engine      = (string) $req->get_param( 'engine' );
 
 		$dir = $this->safe_path( $collection );
 		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
@@ -591,7 +592,9 @@ final class TreeController {
 		if ( $image === null ) return new \WP_Error( 'no_image', 'Paginabeeld niet gevonden', [ 'status' => 404 ] );
 
 		$mime = strtolower( (string) pathinfo( $image, PATHINFO_EXTENSION ) ) === 'png' ? 'image/png' : 'image/jpeg';
-		$text = DocumentAiClient::ocr_image( (string) file_get_contents( $image ), $mime );
+		$text = $engine === 'tesseract'
+			? TesseractClient::ocr_image( (string) file_get_contents( $image ) )
+			: DocumentAiClient::ocr_image( (string) file_get_contents( $image ), $mime );
 		if ( is_wp_error( $text ) ) return $text;
 
 		return new \WP_REST_Response( [ 'text' => $text ] );

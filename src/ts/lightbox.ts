@@ -1106,14 +1106,67 @@ export class Lightbox {
 
     if (textarea.value.trim() && !confirm('De huidige tekst in het vak vervangen door een nieuwe OCR-poging?')) return;
 
+    const engine = (el.querySelector('.fav-lb-crop-engine') as HTMLSelectElement)?.value || 'docai';
+
     this.saving = true;
     ocrBtn.disabled = true;
     statusEl.textContent = 'OCR bezig…';
+
+    if (engine === 'local') {
+      const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
+      const url = (el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement)?.value.trim()
+        || localStorage.getItem('avpvhFavLocalOcrUrl')
+        || 'http://localhost:5001/v1/convert/file';
+
+      const canvas = document.createElement('canvas');
+      canvas.width = imgEl.naturalWidth || imgEl.width;
+      canvas.height = imgEl.naturalHeight || imgEl.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx || canvas.width === 0 || canvas.height === 0) {
+        statusEl.textContent = 'Paginabeeld niet geladen.';
+        this.saving = false;
+        ocrBtn.disabled = false;
+        return;
+      }
+      ctx.drawImage(imgEl, 0, 0);
+      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) {
+        statusEl.textContent = 'Kon paginabeeld niet verwerken.';
+        this.saving = false;
+        ocrBtn.disabled = false;
+        return;
+      }
+      const form = new FormData();
+      form.append('files', blob, 'page.png');
+      form.append('ocr_preset', 'easyocr');
+      form.append('ocr_lang', 'nl');
+
+      try {
+        const res = await fetch(url, { method: 'POST', body: form });
+        const resJson = await res.json().catch(() => ({})) as {
+          document?: { md_content?: string; text_content?: string };
+          detail?: string;
+        };
+        if (!res.ok) {
+          statusEl.textContent = resJson.detail || 'Lokale OCR mislukt.';
+          return;
+        }
+        textarea.value = (resJson.document?.md_content || resJson.document?.text_content || '').trim();
+        statusEl.textContent = 'OCR klaar (Lokale Docker) — nog niet opgeslagen.';
+      } catch {
+        statusEl.textContent = `Kon docling-serve niet bereiken op ${url}. Draait de container?`;
+      } finally {
+        this.saving = false;
+        ocrBtn.disabled = false;
+      }
+      return;
+    }
+
     try {
       const res = await fetch(`${this.cfg.restRoot}scan/ocr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
-        body: JSON.stringify({ collection: item.collection, page_number: item.page }),
+        body: JSON.stringify({ collection: item.collection, page_number: item.page, engine }),
       });
       const data = await res.json().catch(() => ({})) as { text?: string; message?: string };
       if (!res.ok) {
