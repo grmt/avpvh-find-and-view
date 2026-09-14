@@ -4,6 +4,24 @@ set -euo pipefail
 PHP_FILE="avpvh-find-and-view.php"
 PKG_FILE="package.json"
 
+# Deploy all regular sites by default, or only the explicitly named sites.
+# Example: ./deploy.sh staging
+if (( $# )); then
+	sites=( "$@" )
+else
+	sites=( site1 site2 site3 )
+fi
+
+for site in "${sites[@]}"; do
+	case "$site" in
+		site1|site2|site3|staging) ;;
+		*)
+			echo "Unknown deploy target: ${site}" >&2
+			exit 2
+			;;
+	esac
+done
+
 # 1. Read and bump micro version
 current=$(grep -m1 '^ \* Version:' "$PHP_FILE" | sed 's/.*Version:[[:space:]]*//')
 major=$(echo "$current" | cut -d. -f1)
@@ -43,7 +61,7 @@ trap 'composer install' EXIT
 # 7. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/,
 # vendor/ mirrored with --delete so a dependency dropped from composer.json
 # actually disappears server-side too, not just stops being referenced.
-for site in site1 site2 site3; do
+for site in "${sites[@]}"; do
 	dest="user@server.example:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
 
 	rsync -av --omit-dir-times avpvh-find-and-view.php "$dest"
@@ -52,4 +70,4 @@ for site in site1 site2 site3; do
 	rsync -av --delete --omit-dir-times vendor/ "${dest}vendor/"
 done
 
-echo "Done -- ${new_version} deployed."
+echo "Done -- ${new_version} deployed to ${sites[*]}."
