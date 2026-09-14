@@ -336,7 +336,7 @@ export class Lightbox {
             <select class="fav-lb-crop-engine" title="OCR-engine">
               <option value="docai">Document AI (server)</option>
               <option value="tesseract">Tesseract (server, minder nauwkeurig)</option>
-              <option value="local">Lokale Docker (jouw computer)</option>
+              <option value="local">Lokale Docker (Docling — zelfde als local editor)</option>
             </select>
             <input class="fav-lb-crop-local-url" type="text" style="display:none" spellcheck="false"
               title="Adres van de OCR-container die je zelf lokaal draait">
@@ -658,7 +658,7 @@ export class Lightbox {
     const engineSelect = el.querySelector('.fav-lb-crop-engine') as HTMLSelectElement;
     const localUrlInput = el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement;
 
-    localUrlInput.value = localStorage.getItem('avpvhFavLocalOcrUrl') || 'http://localhost:8091/ocr';
+    localUrlInput.value = localStorage.getItem('avpvhFavLocalOcrUrl') || 'http://localhost:5001/v1/convert/file';
     localUrlInput.addEventListener('change', () => {
       localStorage.setItem('avpvhFavLocalOcrUrl', localUrlInput.value.trim());
     });
@@ -765,17 +765,18 @@ export class Lightbox {
   }
 
   // Crops the already-loaded scan image client-side and posts it directly
-  // to an OCR container the admin runs on their own machine — the
+  // to the same local docling-serve container the local_editor_server.py
+  // local editor already uses (POST /v1/convert/file, multipart) — the
   // production VPS has too little CPU/RAM for a heavier, more accurate
-  // OCR model. Browsers exempt http://localhost from the mixed-content
-  // block even on an https page, so this needs no tunnel or VPN, just
-  // the container actually running (see local-ocr/ in the plugin repo).
+  // OCR model than server-side Tesseract. Browsers exempt
+  // http://localhost from the mixed-content block even on an https page,
+  // so this needs no tunnel or VPN, just docling-serve actually running.
   private async runLocalOcr(
     imgEl: HTMLImageElement, x: number, y: number, w: number, h: number,
     previewEl: HTMLImageElement, textEl: HTMLTextAreaElement, statusEl: HTMLElement, titleEl: HTMLElement,
   ): Promise<void> {
     const url = (this.el!.querySelector('.fav-lb-crop-local-url') as HTMLInputElement).value.trim();
-    if (!url) { statusEl.textContent = 'Vul eerst het adres van de lokale OCR-container in.'; return; }
+    if (!url) { statusEl.textContent = 'Vul eerst het adres van docling-serve in.'; return; }
 
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(imgEl.naturalWidth * w));
@@ -788,19 +789,24 @@ export class Lightbox {
       0, 0, canvas.width, canvas.height,
     );
     previewEl.src = canvas.toDataURL('image/png');
-    titleEl.textContent = 'OCR-resultaat (lokale Docker)';
+    titleEl.textContent = 'OCR-resultaat (lokale Docker — Docling)';
 
     const blob: Blob | null = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
     if (!blob) { statusEl.textContent = 'Kon selectie niet uitsnijden.'; return; }
 
+    const form = new FormData();
+    form.append('files', blob, 'crop.png');
+    form.append('ocr_preset', 'easyocr');
+    form.append('ocr_lang', 'nl');
+
     try {
-      const res = await fetch(url, { method: 'POST', body: blob });
-      const data = await res.json().catch(() => ({})) as { text?: string; error?: string };
-      if (!res.ok) { statusEl.textContent = data.error || 'Lokale OCR mislukt.'; return; }
-      textEl.value = data.text ?? '';
+      const res = await fetch(url, { method: 'POST', body: form });
+      const resJson = await res.json().catch(() => ({})) as { document?: { md_content?: string; text_content?: string }; detail?: string };
+      if (!res.ok) { statusEl.textContent = resJson.detail || 'Lokale OCR mislukt.'; return; }
+      textEl.value = (resJson.document?.md_content || resJson.document?.text_content || '').trim();
       statusEl.textContent = '';
     } catch {
-      statusEl.textContent = `Kon de lokale OCR-container niet bereiken op ${url}. Draait de container?`;
+      statusEl.textContent = `Kon docling-serve niet bereiken op ${url}. Draait de container? (Zelfde container als de local editor gebruikt.)`;
     }
   }
 

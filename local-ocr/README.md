@@ -1,30 +1,30 @@
-# Lokale OCR-container
+# Lokale OCR (Docling)
 
 De productieserver heeft te weinig CPU/RAM voor een zwaarder, nauwkeuriger
-OCR-model. Deze map is een minimale OCR-service die je op je **eigen**
-computer draait; de "Lokale Docker"-optie in de crop-select-tool van de
-editor stuurt de uitgesneden afbeelding rechtstreeks vanuit je browser
-hierheen (geen tunnel/VPN nodig — browsers staan `http://localhost` toe
-vanaf een https-pagina).
+OCR-model. De "Lokale Docker"-optie in de crop-select-tool van de editor
+praat rechtstreeks vanuit je browser met **dezelfde docling-serve
+container die `local_editor_server.py` (de local editor) al gebruikt** —
+geen aparte container nodig, en geen tunnel/VPN (browsers staan
+`http://localhost` toe vanaf een https-pagina).
 
-## Starten
+Standaardadres in de editor: `http://localhost:5001/v1/convert/file`
+(pas het tekstvakje naast de dropdown aan als jouw docling-serve op een
+andere poort draait — wordt onthouden per browser).
+
+## Als je nog geen docling-serve draait
 
 ```sh
-cd local-ocr
-docker build -t avpvh-local-ocr .
-docker run --rm -p 8091:8091 avpvh-local-ocr
+docker run --rm -p 5001:5001 ghcr.io/docling-project/docling-serve-cpu
 ```
 
-Laat de container draaien, open de editor, kies bij de crop-tool
-"Lokale Docker (jouw computer)" en selecteer een stukje van het scanbeeld.
-Standaardadres is `http://localhost:8091/ocr` — pas het tekstvak naast de
-dropdown aan als je een andere poort gebruikt (wordt onthouden per browser).
+docling-serve's CORS staat standaard wagenwijd open
+(`cors_origins: ["*"]`), dus een rechtstreekse aanroep vanaf de
+WordPress-pagina werkt zonder extra configuratie.
 
-## Een ander/zwaarder OCR-model gebruiken
+## Wat er precies gebeurt
 
-`ocr_server.py` bevat alleen het HTTP-contract (`POST /ocr` met ruwe
-afbeelding-bytes in, `{"text": "..."}` terug) rond de `tesseract`
-command-line. Vervang de `subprocess.run([...])`-aanroep door iets anders
-(Docling, PaddleOCR, een lokale vision-LLM, …) als je betere resultaten
-wilt dan Tesseract kan geven — de plugin zelf hoeft niet te weten wat er
-in de container zit.
+De browser snijdt de selectie zelf uit (canvas), en post die als
+multipart-formulier naar `POST /v1/convert/file` met
+`ocr_preset=easyocr` en `ocr_lang=nl` — hetzelfde "Standaard Docling +
+EasyOCR"-preset dat de local editor standaard gebruikt. De tekst komt
+terug in `document.md_content` (of `text_content` als dat leeg is).
