@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Server login: $AVPVH_DEPLOY_HOST, or a line AVPVH_DEPLOY_HOST=<user>@<server>
+# in deploy.local.env next to this script (ignored by Git).
+DEPLOY_HOST="${AVPVH_DEPLOY_HOST:-}"
+deploy_env="$(dirname "$0")/deploy.local.env"
+if [ -z "$DEPLOY_HOST" ] && [ -f "$deploy_env" ]; then
+    DEPLOY_HOST=$(sed -n 's/^AVPVH_DEPLOY_HOST=//p' "$deploy_env")
+fi
+if [ -z "$DEPLOY_HOST" ]; then
+    echo "Set AVPVH_DEPLOY_HOST or put AVPVH_DEPLOY_HOST=<user>@<server> in deploy.local.env." >&2
+    exit 1
+fi
+
 PHP_FILE="avpvh-find-and-view.php"
 PKG_FILE="package.json"
 
@@ -35,7 +47,7 @@ npx vite build --config config/vite/tree.config.ts
 
 # 6. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/
 for site in site1 site2 site3; do
-	dest="user@server.example:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
+	dest="${DEPLOY_HOST}:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
 
 	rsync -av --omit-dir-times avpvh-find-and-view.php "$dest"
 	rsync -av --omit-dir-times dist/ "${dest}dist/"

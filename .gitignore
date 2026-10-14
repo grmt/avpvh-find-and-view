@@ -6,3 +6,6 @@ dist/*.css
 dist/class-*.php
 *.log
 .DS_Store
+
+# Local settings, e.g. deploy.local.env with the server login
+*.local.*
