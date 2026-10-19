@@ -4,6 +4,8 @@
  * Description:  Find and view photos, archaeological finds, and scanned documents, powered by Meilisearch.
  * Version:      0.1.67
  * Author:       grmt
+ * Author URI:   https://github.com/grmt/avpvh-find-and-view
+ * Update URI:   https://github.com/grmt/avpvh-find-and-view
  * License:      MIT
  * Requires PHP: 8.2
  * Requires at least: 6.4
