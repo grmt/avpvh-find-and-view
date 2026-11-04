@@ -25,7 +25,7 @@
     "test": "run-p -c --aggregate-output test:*"
   },
   "dependencies": {
-    "@meilisearch/instant-meilisearch": "^0.19",
+    "@meilisearch/instant-meilisearch": "^0.31",
     "dompurify": "^3.4.13",
     "instantsearch.js": "^4",
     "marked": "^18.0.9",
