@@ -323,7 +323,9 @@ final class TreeController {
 
 		try {
 
-			$index->updateFilterableAttributes( [ 'collection', 'page_number', 'type', 'tags' ] );
+			// 'text' must stay filterable: the "Woorddelen" option filters on
+			// text CONTAINS …, and this call replaces the whole list.
+			$index->updateFilterableAttributes( [ 'collection', 'page_number', 'type', 'text', 'tags' ] );
 
 			$docs = [];
 			$it   = new \RecursiveIteratorIterator(
