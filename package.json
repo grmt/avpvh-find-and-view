@@ -29,6 +29,7 @@
     "dompurify": "^3.4.13",
     "instantsearch.js": "^4",
     "marked": "^18.0.9",
+    "meilisearch": "^0.57.0",
     "pdfjs-dist": "^4.10.38",
     "photoswipe": "^5.4.4"
   },
