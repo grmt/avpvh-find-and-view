@@ -62,7 +62,6 @@ final class PdfIndexer {
 			'post_mime_type'   => 'application/pdf',
 			'post_parent'      => $post->ID,
 			'posts_per_page'   => -1,
-			'suppress_filters' => true,
 		] );
 	}
 }

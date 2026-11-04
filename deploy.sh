@@ -50,6 +50,9 @@ sed -i "s/^\( \* Version:\s*\).*$/\1${new_version}/" "$PHP_FILE"
 # 3. Update AVPVH_FAV_VERSION constant
 sed -i "s/define( 'AVPVH_FAV_VERSION', '[^']*' )/define( 'AVPVH_FAV_VERSION', '${new_version}' )/" "$PHP_FILE"
 
+# 3b. Update the readme's Stable tag
+sed -i "s/^Stable tag: .*$/Stable tag: ${new_version}/" readme.txt
+
 # 4. Update package.json
 node -e "
 const fs = require('fs');
@@ -76,7 +79,7 @@ trap 'composer install' EXIT
 for site in "${sites[@]}"; do
 	dest="${DEPLOY_HOST}:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
 
-	rsync -av --omit-dir-times avpvh-find-and-view.php "$dest"
+	rsync -av --omit-dir-times avpvh-find-and-view.php readme.txt "$dest"
 	rsync -av --omit-dir-times dist/ "${dest}dist/"
 	rsync -av --omit-dir-times src/php/ "${dest}src/php/"
 	rsync -av --delete --omit-dir-times vendor/ "${dest}vendor/"
