@@ -205,8 +205,8 @@ export class BrowseMode {
     const colThumbs: Record<string, string[]> = {};
     const hits = (data?.hits ?? []).filter(h => h.thumb_url).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
     for (const hit of hits) {
-      if (!colThumbs[hit.collection]) colThumbs[hit.collection] = [];
-      if (colThumbs[hit.collection].length < 6) colThumbs[hit.collection].push(hit.thumb_url!);
+      const thumbs = (colThumbs[hit.collection] ??= []);
+      if (thumbs.length < 6) thumbs.push(hit.thumb_url!);
     }
 
     const result: Record<string, string[]> = {};

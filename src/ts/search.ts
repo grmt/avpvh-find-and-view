@@ -442,8 +442,9 @@ function initInstance(cfg: FavConfig): void {
       .then(r => r.json())
       .then((data: { hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }) => {
         const docs = (data.hits ?? []).filter(d => d.url);
-        if (!docs.length) return;
-        const baseUrl = docs[0].url.replace(/^(https?:\/\/[^/]+).*/, '$1');
+        const firstDoc = docs[0];
+        if (!firstDoc) return;
+        const baseUrl = firstDoc.url.replace(/^(https?:\/\/[^/]+).*/, '$1');
         const urlToTitle = new Map(docs.map(d => [d.url, d.title]));
 
         const pageDocs = docs.filter(d => d.type !== 'post');
@@ -463,22 +464,23 @@ function initInstance(cfg: FavConfig): void {
           const path = doc.url.slice(baseUrl.length).replace(/^\/|\/$/g, '');
           if (!path) continue;
           const segs = path.split('/');
+          const firstSeg = segs[0] ?? '';
 
           // If any segment is an auto-slug, put in overige (top-level only: first segment)
-          if (isAutoSlug(segs[0])) {
-            overige.push({ url: doc.url, title: doc.title || slugTitle(segs[0]), children: {} });
+          if (isAutoSlug(firstSeg)) {
+            overige.push({ url: doc.url, title: doc.title || slugTitle(firstSeg), children: {} });
             continue;
           }
 
           let node = pgTree;
-          for (let i = 0; i < segs.length; i++) {
-            const slug = segs[i];
-            if (!node[slug]) {
+          segs.forEach((slug, i) => {
+            let child = node[slug];
+            if (!child) {
               const partUrl = `${baseUrl}/${segs.slice(0, i + 1).join('/')}/`;
-              node[slug] = { url: partUrl, title: urlToTitle.get(partUrl) ?? slugTitle(slug), children: {} };
+              child = node[slug] = { url: partUrl, title: urlToTitle.get(partUrl) ?? slugTitle(slug), children: {} };
             }
-            node = node[slug].children;
-          }
+            node = child.children;
+          });
         }
 
         // Add overige bucket if needed
@@ -663,11 +665,11 @@ function initInstance(cfg: FavConfig): void {
     for (const [path, count] of Object.entries(cols)) {
       const parts = path.split('/');
       let node = tree;
-      for (let i = 0; i < parts.length; i++) {
-        if (!node[parts[i]]) node[parts[i]] = { _path: parts.slice(0, i + 1).join('/'), _count: 0, _children: {} };
-        if (i === parts.length - 1) node[parts[i]]._count = count;
-        node = node[parts[i]]._children;
-      }
+      parts.forEach((part, i) => {
+        const child = (node[part] ??= { _path: parts.slice(0, i + 1).join('/'), _count: 0, _children: {} });
+        if (i === parts.length - 1) child._count = count;
+        node = child._children;
+      });
     }
     return renderColTreeNode(tree);
   }
