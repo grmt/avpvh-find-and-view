@@ -26,6 +26,11 @@ final class FindAndViewShortcode {
 			'browse_root_label' => __( 'Galerij', 'avpvh-find-and-view' ),
 		], $atts );
 
+		$gate = Settings::login_gate();
+		if ( $gate !== null ) {
+			return $gate;
+		}
+
 		if ( empty( $s['meili_url'] ) || empty( $s['meili_key'] ) ) {
 			return '<p>' . esc_html__( 'Meilisearch niet geconfigureerd.', 'avpvh-find-and-view' ) . '</p>';
 		}
