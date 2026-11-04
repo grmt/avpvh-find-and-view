@@ -12,7 +12,6 @@
   "scripts": {
     "clean": "rimraf --glob dist/*",
     "prebuild": "npm run clean",
-    "build:gulp": "gulp --gulpfile config/gulpfile.js --cwd . --color build",
     "build:js:search": "vite build --config config/vite/search.config.ts",
     "build:js:ecli": "vite build --config config/vite/ecli.config.ts",
     "build:js:tree": "vite build --config config/vite/tree.config.ts",
