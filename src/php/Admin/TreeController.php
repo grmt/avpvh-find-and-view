@@ -220,10 +220,22 @@ final class TreeController {
 		return $files;
 	}
 
+	/**
+	 * Move a file or directory, as rename() does, through WP_Filesystem_Direct.
+	 *
+	 * The scans live on local disk, so the direct method is always the right one;
+	 * WP_Filesystem() could ask for FTP credentials in a REST request.
+	 */
+	private function move_path( string $from, string $to, bool $overwrite = true ): bool {
+		require_once ABSPATH . 'wp-admin/includes/class-wp-filesystem-base.php';
+		require_once ABSPATH . 'wp-admin/includes/class-wp-filesystem-direct.php';
+		return ( new \WP_Filesystem_Direct( null ) )->move( $from, $to, $overwrite );
+	}
+
 	private function rotate_backups( string $file ): void {
 		for ( $n = 3; $n > 1; $n-- ) {
 			$src = "{$file}.bak" . ( $n - 1 );
-			if ( is_file( $src ) ) rename( $src, "{$file}.bak{$n}" );
+			if ( is_file( $src ) ) $this->move_path( $src, "{$file}.bak{$n}" );
 		}
 		if ( is_file( $file ) ) copy( $file, "{$file}.bak1" );
 	}
@@ -283,7 +295,7 @@ final class TreeController {
 		if ( ! is_dir( $to_dir ) ) wp_mkdir_p( $to_dir );
 		if ( file_exists( $to_abs ) ) return new \WP_Error( 'exists', 'Destination exists', [ 'status' => 409 ] );
 
-		if ( ! rename( $from_abs, $to_abs ) ) return new \WP_Error( 'rename', 'Move failed', [ 'status' => 500 ] );
+		if ( ! $this->move_path( $from_abs, $to_abs, false ) ) return new \WP_Error( 'rename', 'Move failed', [ 'status' => 500 ] );
 
 		return new \WP_REST_Response( [ 'ok' => true ] );
 	}
@@ -474,12 +486,12 @@ final class TreeController {
 		if ( preg_match( '/^page_(\d+)$/', $label, $lm ) === 1 ) $width = strlen( $lm[1] );
 
 		$removed_dir = $dir . '/verwijderd';
-		if ( ! is_dir( $removed_dir ) ) mkdir( $removed_dir );
+		if ( ! is_dir( $removed_dir ) ) wp_mkdir_p( $removed_dir );
 
 		foreach ( $this->related_page_files( $dir, $label ) as $f ) {
 			$dest = "{$removed_dir}/{$f}";
-			if ( is_file( $dest ) ) unlink( $dest );
-			rename( "{$dir}/{$f}", $dest );
+			if ( is_file( $dest ) ) wp_delete_file( $dest );
+			$this->move_path( "{$dir}/{$f}", $dest );
 		}
 
 		// Shift every later page down by one, ascending so renames never collide.
@@ -496,7 +508,7 @@ final class TreeController {
 			$new_label = 'page_' . str_pad( (string) ( $num - 1 ), $width, '0', STR_PAD_LEFT );
 			foreach ( $this->related_page_files( $dir, $old_label ) as $f ) {
 				$new_name = $new_label . substr( $f, strlen( $old_label ) );
-				rename( "{$dir}/{$f}", "{$dir}/{$new_name}" );
+				$this->move_path( "{$dir}/{$f}", "{$dir}/{$new_name}" );
 			}
 		}
 
@@ -1079,7 +1091,7 @@ final class TreeController {
 				'to'   => ltrim( str_replace( $root, '', $new_abs ), '/' ),
 			];
 
-			if ( ! $dry_run ) rename( $abs, $new_abs );
+			if ( ! $dry_run ) $this->move_path( $abs, $new_abs, false );
 		}
 
 		return new \WP_REST_Response( [ 'renamed' => $renamed, 'dry_run' => $dry_run ] );

@@ -14,7 +14,7 @@ final class XlsxIndexer {
 
 		$zip = new \ZipArchive();
 		if ( $zip->open( $file->getPathname() ) !== true ) {
-			throw new \RuntimeException( 'Could not open XLSX file: ' . $file->getFilename() );
+			throw new \RuntimeException( 'Could not open XLSX file: ' . esc_html( $file->getFilename() ) );
 		}
 
 		try {

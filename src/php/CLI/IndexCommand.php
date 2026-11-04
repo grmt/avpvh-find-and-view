@@ -31,7 +31,6 @@ final class IndexCommand {
 			'post_type'      => $types,
 			'post_status'    => 'publish',
 			'posts_per_page' => -1,
-			'suppress_filters' => true,
 		] );
 
 		$index = Settings::content_index();
