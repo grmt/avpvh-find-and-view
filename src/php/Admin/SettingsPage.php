@@ -13,9 +13,14 @@ final class SettingsPage {
 
 	public function enqueue_tree( string $hook ): void {
 		if ( $hook !== 'settings_page_avpvh-find-and-view' ) return;
-		$base = plugin_dir_url( dirname( __DIR__, 3 ) . '/avpvh-find-and-view.php' );
-		wp_enqueue_style( 'fav-tree', $base . 'dist/css/tree.css', [], '0.1.0' );
-		wp_enqueue_script( 'fav-tree', $base . 'dist/js/tree.iife.js', [], '0.1.0', true );
+		$dir  = dirname( __DIR__, 3 );
+		$base = plugin_dir_url( $dir . '/avpvh-find-and-view.php' );
+		// File mtime as version, like the search and ECLI assets, so a deploy
+		// busts the browser cache.
+		$css = $dir . '/dist/css/tree.css';
+		$js  = $dir . '/dist/js/tree.iife.js';
+		wp_enqueue_style( 'fav-tree', $base . 'dist/css/tree.css', [], file_exists( $css ) ? (string) filemtime( $css ) : false );
+		wp_enqueue_script( 'fav-tree', $base . 'dist/js/tree.iife.js', [], file_exists( $js ) ? (string) filemtime( $js ) : false, true );
 		wp_localize_script( 'fav-tree', 'favTree', [
 			'root'  => rest_url( 'avpvh-fav/v1/' ),
 			'nonce' => wp_create_nonce( 'wp_rest' ),
