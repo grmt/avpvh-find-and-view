@@ -85,6 +85,7 @@ final class SettingsPage {
 								value="<?php echo esc_attr( $s['index_prefix'] ); ?>" class="small-text">
 							<p class="description">
 								<?php printf(
+									/* translators: %s: index prefix */
 									esc_html__( 'Media index: %s_media', 'avpvh-find-and-view' ),
 									esc_html( $s['index_prefix'] )
 								); ?>

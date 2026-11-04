@@ -70,7 +70,7 @@ jobs:
       - name: "Assemble plugin"
         run: |
           mkdir -p build/avpvh-find-and-view/src
-          cp -r avpvh-find-and-view.php dist vendor build/avpvh-find-and-view/
+          cp -r avpvh-find-and-view.php readme.txt dist vendor build/avpvh-find-and-view/
           cp -r src/php build/avpvh-find-and-view/src/
 
       - name: "Upload artifact"
