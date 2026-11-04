@@ -1,6 +1,7 @@
-import type { FavConfig, MeiliHit } from './types';
+import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
 import type { Lightbox, LightboxItem } from './lightbox';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
+import { meiliSearch } from './meili';
 
 const PAGE_SIZE = 60;
 
@@ -39,7 +40,7 @@ export class BrowseMode {
     // Fetch facets once and cache
     if (!Object.keys(this.allCollections).length) {
       const data = await this.fetchFacets();
-      this.allCollections = data.facetDistribution?.['collection'] ?? {};
+      this.allCollections = data?.facetDistribution?.['collection'] ?? {};
     }
 
     // Determine if path is a leaf collection (has own documents) or a folder prefix
@@ -137,11 +138,13 @@ export class BrowseMode {
       this.gridEl.appendChild(card);
     });
 
-    // Then leaf collections
+    // Then leaf collections — text-only collections (e.g. chat transcripts)
+    // have no thumb_url to show, so fall back to the same document icon used
+    // elsewhere for text-only items.
     leaves.sort().forEach(colPath => {
       const name = colPath.split('/').at(-1)!;
       const count = cols[colPath] ?? 0;
-      const card = this.makeCard(name, covers[colPath] ?? [], count);
+      const card = this.makeCard(name, covers[colPath] ?? [], count, '📄');
       card.addEventListener('click', () => void this.enter(colPath));
       this.gridEl.appendChild(card);
     });
@@ -191,23 +194,19 @@ export class BrowseMode {
     if (!needed.length) return {};
 
     const filter = needed.map(c => `collection = "${c}"`).join(' OR ');
-    const data = await fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        q: '',
-        limit: 1000,
-        filter,
-        attributesToRetrieve: ['collection', 'thumb_url', 'page_number'],
-      }),
-    }).then(r => r.json()) as { hits: MeiliHit[] };
+    const data = await meiliSearch<{ hits: MeiliHit[] }>(this.cfg, this.cfg.mediaIndex, {
+      q: '',
+      limit: 1000,
+      filter,
+      attributesToRetrieve: ['collection', 'thumb_url', 'page_number'],
+    });
 
     // Up to 6 thumbs per collection, sorted by page_number asc
     const colThumbs: Record<string, string[]> = {};
-    const hits = (data.hits ?? []).filter(h => h.thumb_url).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+    const hits = (data?.hits ?? []).filter(h => h.thumb_url).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
     for (const hit of hits) {
-      if (!colThumbs[hit.collection]) colThumbs[hit.collection] = [];
-      if (colThumbs[hit.collection].length < 6) colThumbs[hit.collection].push(hit.thumb_url!);
+      const thumbs = (colThumbs[hit.collection] ??= []);
+      if (thumbs.length < 6) thumbs.push(hit.thumb_url!);
     }
 
     const result: Record<string, string[]> = {};
@@ -227,12 +226,8 @@ export class BrowseMode {
     return result;
   }
 
-  private async fetchFacets(): Promise<{ facetDistribution?: Record<string, Record<string, number>> }> {
-    return fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: '', limit: 0, facets: ['collection'] }),
-    }).then(r => r.json());
+  private async fetchFacets(): Promise<{ facetDistribution?: Record<string, Record<string, number>> } | null> {
+    return meiliSearch(this.cfg, this.cfg.mediaIndex, { q: '', limit: 0, facets: ['collection'] });
   }
 
   private async renderCollection(name: string, reset = true): Promise<void> {
@@ -246,19 +241,17 @@ export class BrowseMode {
       this.gridEl.querySelector('.fav-load-more')?.remove();
     }
 
-    const data = await fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        q: '',
-        filter: `collection = "${name}"`,
-        limit: PAGE_SIZE,
-        offset: this.loadMoreOffset,
-        attributesToRetrieve: ['id', 'url', 'thumb_url', 'title', 'page_number', 'collection'],
-      }),
-    }).then(r => r.json()) as { hits: MeiliHit[]; estimatedTotalHits: number };
+    const data = await meiliSearch<{ hits: MeiliHit[]; estimatedTotalHits: number }>(this.cfg, this.cfg.mediaIndex, {
+      q: '',
+      filter: `collection = "${name}"`,
+      limit: PAGE_SIZE,
+      offset: this.loadMoreOffset,
+      attributesToRetrieve: ['id', 'url', 'thumb_url', 'title', 'page_number', 'date', 'collection'],
+    });
 
-    const hits = (data.hits ?? []).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+    if (!data) { this.gridEl.innerHTML = ''; return; }
+
+    const hits = (data.hits ?? []).sort(compareHitOrder);
     const total = data.estimatedTotalHits ?? 0;
 
     if (reset) this.gridEl.innerHTML = '';
@@ -272,7 +265,9 @@ export class BrowseMode {
       div.innerHTML =
         `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}">` +
         thumbInner +
-        (hit.page_number != null ? `<span class="fav-page-badge">${hit.page_number}</span>` : '') +
+        (hit.page_number != null
+          ? `<span class="fav-page-badge">${hit.page_number}</span>`
+          : hit.title ? `<span class="fav-page-badge fav-title-badge">${hit.title}</span>` : '') +
         `</a>`;
       this.gridEl.appendChild(div);
     });
@@ -301,24 +296,22 @@ export class BrowseMode {
       e.preventDefault();
       const hitId = link.dataset['id'] ?? '';
 
-      const data = await fetch(`${this.cfg.meiliUrl}/indexes/${this.cfg.mediaIndex}/search`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${this.cfg.meiliKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          q: '',
-          filter: `collection = "${collection}"`,
-          limit: 5000,
-          attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection', 'text_format', 'has_image'],
-        }),
-      }).then(r => r.json()) as { hits: MeiliHit[] };
+      const data = await meiliSearch<{ hits: MeiliHit[] }>(this.cfg, this.cfg.mediaIndex, {
+        q: '',
+        filter: `collection = "${collection}"`,
+        limit: 5000,
+        attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
+      });
+      if (!data) return;
 
       const allHits = (data.hits ?? [])
         .filter(h => h.url)
-        .sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+        .sort(compareHitOrder);
 
       const items: LightboxItem[] = allHits.map(h => {
-        // Show only leaf collection name + page number (not full path)
-        const caption = collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : '');
+        // Show only leaf collection name + page number (not full path) —
+        // chat transcripts have no page_number, so fall back to their title.
+        const caption = collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
         const isMd = h.text_format === 'md' || (h.text ? looksLikeMarkdown(h.text) : false);
         const mdHtml = h.text ? renderMarkdown(h.text) : '';
         const plainHtml = h.text ? renderPlain(h.text) : '';
@@ -327,8 +320,8 @@ export class BrowseMode {
         const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
         const hasImage = h.has_image !== false;
         return isPdf
-          ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text, textAlt, kind: 'pdf' as const, page: h.page_number ?? undefined }
-          : { url: h.url, caption, text, textAlt, ...(hasImage ? {} : { kind: 'text' as const }) };
+          ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text, textAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, collection: h.collection, rawText: h.text }
+          : { url: h.url, caption, text, textAlt, collection: h.collection, rawText: h.text, page: h.page_number ?? undefined, ...(hasImage ? {} : { kind: 'text' as const }) };
       });
 
       const startIdx = allHits.findIndex(h => h.id === hitId);

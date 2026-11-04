@@ -1,0 +1,31 @@
+# Minor and patch updates come as one PR per ecosystem a week; majors stay
+# separate PRs.
+version: 2
+updates:
+- package-ecosystem: github-actions
+  directory: "/"
+  groups:
+    actions:
+      update-types: [minor, patch]
+  schedule:
+    interval: weekly
+  assignees:
+    - grmt
+- package-ecosystem: npm
+  directory: "/"
+  groups:
+    npm:
+      update-types: [minor, patch]
+  schedule:
+    interval: weekly
+  assignees:
+    - grmt
+- package-ecosystem: composer
+  directory: "/"
+  groups:
+    composer:
+      update-types: [minor, patch]
+  schedule:
+    interval: weekly
+  assignees:
+    - grmt

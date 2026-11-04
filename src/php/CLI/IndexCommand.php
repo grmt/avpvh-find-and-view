@@ -3,6 +3,7 @@
 namespace Avpvh\FindAndView\CLI;
 
 use Avpvh\FindAndView\Index\MeilisearchClient;
+use Avpvh\FindAndView\Index\PdfIndexer;
 use Avpvh\FindAndView\Index\PostIndexer;
 use Avpvh\FindAndView\Settings;
 
@@ -30,7 +31,6 @@ final class IndexCommand {
 			'post_type'      => $types,
 			'post_status'    => 'publish',
 			'posts_per_page' => -1,
-			'suppress_filters' => true,
 		] );
 
 		$index = Settings::content_index();
@@ -47,6 +47,12 @@ final class IndexCommand {
 		foreach ( $posts as $post ) {
 			$item = PostIndexer::from_post( $post );
 			if ( $item ) $batch[] = $item;
+
+			foreach ( PdfIndexer::attachments_of( $post ) as $attachment ) {
+				$pdf_item = PdfIndexer::from_attachment( $attachment, $post );
+				if ( $pdf_item ) $batch[] = $pdf_item;
+			}
+
 			if ( count( $batch ) >= 100 ) {
 				$client->upsert( $index, ...$batch );
 				$batch = [];

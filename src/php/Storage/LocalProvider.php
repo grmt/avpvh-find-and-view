@@ -31,7 +31,7 @@ final class LocalProvider implements StorageProvider {
 		$upload_dir = wp_upload_dir();
 		$path       = trailingslashit( $upload_dir['basedir'] ) . $loc->id;
 		if ( file_exists( $path ) ) {
-			unlink( $path );
+			wp_delete_file( $path );
 		}
 	}
 }

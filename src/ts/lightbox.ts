@@ -1,4 +1,39 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
+import type { FavConfig } from './types';
+import { meiliSearch } from './meili';
+
+const DIFF_TOKEN_RE = /\s+|\S+/g;
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+}
+
+// Word-level "track changes" diff, mirroring local_review_tool.py's inline diff
+// view: an LCS over whitespace/word tokens, deletions struck through,
+// insertions highlighted, flowing as normal text.
+function diffWords(oldText: string, newText: string): string {
+  const a = oldText.match(DIFF_TOKEN_RE) ?? [];
+  const b = newText.match(DIFF_TOKEN_RE) ?? [];
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
+  }
+  let i = 0, j = 0;
+  const parts: string[] = [];
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { parts.push(escapeHtml(a[i]!)); i++; j++; }
+    else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) { parts.push(`<del>${escapeHtml(a[i]!)}</del>`); i++; }
+    else { parts.push(`<ins>${escapeHtml(b[j]!)}</ins>`); j++; }
+  }
+  while (i < n) { parts.push(`<del>${escapeHtml(a[i]!)}</del>`); i++; }
+  while (j < m) { parts.push(`<ins>${escapeHtml(b[j]!)}</ins>`); j++; }
+  return parts.join('');
+}
 
 // Vite's `?url` asset imports don't resolve correctly in this IIFE lib build,
 // so derive the worker's URL from wherever this script itself was loaded from
@@ -30,6 +65,12 @@ export interface LightboxItem {
   page?: number;
   highlightTerms?: string[];
   isMatch?: boolean;
+  // The raw, unrendered source text and the scan collection it belongs to —
+  // only present for scan pages, and only needed so the edit panel has
+  // something to save back to `${restRoot}scan/edit`. Absent (e.g. chat
+  // transcripts, xlsx rows) means this item isn't editable.
+  collection?: string;
+  rawText?: string;
 }
 
 interface HighlightRect {
@@ -44,14 +85,38 @@ export class Lightbox {
   private items: LightboxItem[] = [];
   private idx = 0;
   private imgZoom = 1;
+  // Pan offset in screen pixels, applied outside the scale in the transform
+  // (translate(panX,panY) scale(imgZoom)) so drag deltas map 1:1 without
+  // dividing by zoom. Native overflow-scroll doesn't pick up a transform's
+  // visual overflow here, so panning is tracked explicitly instead of via
+  // scrollLeft/scrollTop.
+  private panX = 0;
+  private panY = 0;
   private txtZoom = 1;
   private onClose: (() => void) | null = null;
   private pdfDocs = new Map<string, pdfjsLib.PDFDocumentLoadingTask>();
-  private currentBlobUrl: string | null = null;
+  // Rendered PDF pages are expensive (canvas render at 2x scale + PNG encode),
+  // so cache the blob URL per (doc, page) — revisiting a page you already
+  // viewed this session should be instant, not a full re-render. Bounded so
+  // paging through a long document doesn't grow memory without limit; the
+  // highlight terms aren't part of the key since they're drawn as a separate
+  // overlay layer, not baked into the rendered image (see findHighlightRects).
+  private pageImageCache = new Map<string, string>();
+  private static readonly PAGE_CACHE_LIMIT = 24;
   private showToken = 0;
   private highlightRects: HighlightRect[] = [];
   private hiddenPanel: 'img' | 'text' | null = null;
   private showingAltText = false;
+  // Persists across page navigation within one open() session, same as
+  // txtZoom — a reader who wants monospace for aligned OCR columns almost
+  // certainly wants it for every page of this document, not just one.
+  private monoFont = false;
+  private cropMode = false;
+  private cropDragStart: { x: number; y: number } | null = null;
+  private editing = false;
+  private saving = false;
+
+  constructor(private readonly cfg: FavConfig) {}
 
   // Prefer the original publisher/repository URL over our own hosted copy for
   // "open externally" actions (navigation, not the in-page PDF.js render,
@@ -82,21 +147,84 @@ export class Lightbox {
       : Lightbox.FULLSCREEN_ENTER_SVG;
   };
 
+  private readonly outsideClickHandler = (e: MouseEvent): void => {
+    if (!this.el) return;
+    if (!(e.target as Element).closest('.fav-lb-search-wrap')) {
+      this.el.querySelector('.fav-lb-search-panel')?.classList.remove('fav-open');
+    }
+    if (!(e.target as Element).closest('.fav-lb-history-wrap')) {
+      this.el.querySelector('.fav-lb-history-panel')?.classList.remove('fav-open');
+    }
+  };
+
   private readonly keyHandler = (e: KeyboardEvent): void => {
     if (!this.el) return;
+
+    if ((e.ctrlKey || e.metaKey) && e.key === 's' && this.editing) {
+      e.preventDefault();
+      void this.saveEdit();
+      return;
+    }
+    if (this.editing && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      this.wrapSelection('**');
+      return;
+    }
+    if (this.editing && (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'i') {
+      e.preventDefault();
+      this.wrapSelection('*');
+      return;
+    }
+    if (this.editing && (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'x') {
+      e.preventDefault();
+      this.wrapSelection('~~');
+      return;
+    }
+    if (e.key === 'Escape') {
+      const searchPanel = this.el.querySelector('.fav-lb-search-panel');
+      const historyPanel = this.el.querySelector('.fav-lb-history-panel');
+      const diffView = this.el.querySelector('.fav-lb-diff-view') as HTMLElement | null;
+      if (searchPanel?.classList.contains('fav-open')) { searchPanel.classList.remove('fav-open'); return; }
+      if (historyPanel?.classList.contains('fav-open')) { historyPanel.classList.remove('fav-open'); return; }
+      if (diffView && diffView.style.display !== 'none') { this.closeDiffView(); return; }
+      if (this.editing) { this.exitEditMode(); return; }
+      this.close();
+      return;
+    }
+
+    // While typing in the edit textarea or a search/replace input, arrow
+    // keys must move the cursor / do nothing special — not page-navigate
+    // or pan the image underneath the user.
+    const target = e.target as HTMLElement;
+
+    // A plain <textarea> tabs *out* to the next focusable element by
+    // default, which would silently kick you out of an edit — capture Tab
+    // here and insert a literal tab character instead, same as any real
+    // text editor. Only for the edit textarea itself: Tab in the search/
+    // replace panel's fields should keep moving between them normally.
+    const editTextarea = this.el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement | null;
+    if (target === editTextarea && e.key === 'Tab') {
+      e.preventDefault();
+      const start = editTextarea.selectionStart;
+      const end = editTextarea.selectionEnd;
+      editTextarea.value = editTextarea.value.slice(0, start) + '\t' + editTextarea.value.slice(end);
+      editTextarea.selectionStart = editTextarea.selectionEnd = start + 1;
+      editTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+
+    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') return;
+
     const arrowKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
     if (arrowKeys.includes(e.key) && this.imgZoom > 1.01) {
       // Zoomed in: arrows pan the image instead of navigating, since
       // that's what you actually want once you can no longer see the
       // whole page — otherwise there'd be no keyboard way to pan at all.
       e.preventDefault();
-      const wrap = this.el.querySelector('.fav-lb-img-wrap') as HTMLElement;
       const step = 80;
-      wrap.scrollBy({
-        left: e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0,
-        top: e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0,
-        behavior: 'smooth',
-      });
+      this.panX -= e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+      this.panY -= e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+      this.applyImgTransform();
       return;
     }
     if (e.key === 'ArrowLeft') this.show(this.idx - 1);
@@ -106,13 +234,14 @@ export class Lightbox {
       const i = this.findMatchIdx(e.key === 'ArrowUp' ? -1 : 1);
       if (i >= 0) this.show(i);
     }
-    if (e.key === 'Escape') this.close();
   };
 
   open(items: LightboxItem[], startIdx: number, onClose?: () => void): void {
     this.close();
     this.items = items;
     this.imgZoom = 1;
+    this.panX = 0;
+    this.panY = 0;
     this.txtZoom = 1;
     this.hiddenPanel = null;
     this.onClose = onClose ?? null;
@@ -148,6 +277,39 @@ export class Lightbox {
           <button class="fav-lb-btn fav-lb-icon fav-lb-toggle-text" title="Tekst tonen/verbergen">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
           </button>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-edit" title="Tekst bewerken" style="display:none">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          </button>
+          <div class="fav-lb-search-wrap" style="position:relative;display:none">
+            <button class="fav-lb-btn fav-lb-icon fav-lb-search-btn" title="Zoeken in deze collectie">
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            </button>
+            <div class="fav-lb-search-panel">
+              <div class="fav-lb-search-toolbar">
+                <input class="fav-lb-search-input" type="search" placeholder="Zoek in collectie…" autocomplete="off">
+              </div>
+              <div class="fav-lb-search-replace-row" style="display:none">
+                <label><input type="checkbox" class="fav-lb-search-regex"> Regex</label>
+                <label><input type="checkbox" class="fav-lb-search-case"> Hoofdlettergevoelig</label>
+                <label><input type="checkbox" class="fav-lb-search-word"> Heel woord</label>
+                <input class="fav-lb-replace-input" type="text" placeholder="Vervangen door…" autocomplete="off">
+                <button class="fav-lb-btn fav-lb-replace-all-btn">Vervang alles</button>
+              </div>
+              <div class="fav-lb-search-results"></div>
+            </div>
+          </div>
+          <div class="fav-lb-history-wrap" style="position:relative;display:none">
+            <button class="fav-lb-btn fav-lb-icon fav-lb-history-btn" title="Back-upgeschiedenis">
+              <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 7 7c-1.9 0-3.62-.79-4.83-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8z"/></svg>
+            </button>
+            <div class="fav-lb-history-panel"></div>
+          </div>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-consolidate" title="Overzicht (consolidated_extracted_text.txt) opnieuw genereren" style="display:none">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M4 4h16v2H4zm0 5h16v2H4zm0 5h10v2H4zm0 5h10v2H4zm14-4v6l4-3z"/></svg>
+          </button>
+          <button class="fav-lb-btn fav-lb-icon fav-lb-delete-page" title="Pagina verwijderen" style="display:none">
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+          </button>
           <button class="fav-lb-btn fav-lb-icon fav-lb-fullscreen" title="Volledig scherm">
             <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
           </button>
@@ -160,7 +322,7 @@ export class Lightbox {
       <div class="fav-lb-body">
         <div class="fav-lb-img-outer">
           <div class="fav-lb-img-wrap">
-            <img class="fav-lb-img" alt="">
+            <img class="fav-lb-img" alt="" draggable="false">
             <div class="fav-lb-highlights"></div>
           </div>
           <div class="fav-lb-loading" style="display:none">Laden…</div>
@@ -168,6 +330,29 @@ export class Lightbox {
             <button class="fav-lb-zbtn">&#x2212;</button>
             <button class="fav-lb-zbtn">1:1</button>
             <button class="fav-lb-zbtn">+</button>
+          </div>
+          <div class="fav-lb-crop-tools" style="display:none">
+            <button class="fav-lb-btn fav-lb-crop-toggle" title="Selecteer een stukje van het scanbeeld om alleen dat te laten her-OCR'en">&#9986; Selecteren</button>
+            <select class="fav-lb-crop-engine" title="OCR-engine">
+              <option value="docai">Document AI (server)</option>
+              <option value="tesseract">Tesseract (server, minder nauwkeurig)</option>
+              <option value="local">Lokale Docker (Docling — zelfde als local editor)</option>
+            </select>
+            <input class="fav-lb-crop-local-url" type="text" style="display:none" spellcheck="false"
+              title="Adres van de OCR-container die je zelf lokaal draait">
+          </div>
+          <div class="fav-lb-crop-rect" style="display:none"></div>
+          <div class="fav-lb-crop-result" style="display:none">
+            <div class="fav-lb-crop-result-header">
+              <span>OCR-resultaat van selectie</span>
+              <button class="fav-lb-btn fav-lb-crop-close">&times;</button>
+            </div>
+            <img class="fav-lb-crop-preview" alt="Selectie">
+            <textarea class="fav-lb-crop-text" spellcheck="true" lang="nl"></textarea>
+            <div class="fav-lb-crop-result-bar">
+              <span class="fav-lb-crop-status"></span>
+              <button class="fav-lb-btn fav-lb-crop-insert">Invoegen in tekst</button>
+            </div>
           </div>
         </div>
         <div class="fav-lb-resizer"></div>
@@ -177,8 +362,34 @@ export class Lightbox {
             <button class="fav-lb-zbtn">A</button>
             <button class="fav-lb-zbtn">+</button>
             <button class="fav-lb-zbtn fav-lb-format-toggle" style="display:none;width:auto;padding:0 .5em" title="Wissel tussen opgemaakte en platte tekstweergave"></button>
+            <button class="fav-lb-zbtn fav-lb-mono-toggle" style="width:auto;padding:0 .5em;font-family:monospace" title="Vast-breedte lettertype — handig als kolommen met spaties zijn uitgelijnd">Mono</button>
           </div>
           <div class="fav-lb-text-content"></div>
+          <div class="fav-lb-edit-wrap" style="display:none">
+            <div class="fav-lb-format-bar">
+              <button class="fav-lb-btn fav-lb-fmt-bold" title="Vet (Ctrl+B)"><strong>B</strong></button>
+              <button class="fav-lb-btn fav-lb-fmt-italic" title="Cursief (Ctrl+I)"><em>I</em></button>
+              <button class="fav-lb-btn fav-lb-fmt-strike" title="Doorgestreept (Ctrl+Shift+X)"><s>S</s></button>
+              <span class="fav-lb-format-sep"></span>
+              <button class="fav-lb-btn fav-lb-fmt-heading" title="Kop van de huidige regel (##)">H</button>
+              <button class="fav-lb-btn fav-lb-fmt-paragraph" title="Alinea herstellen — regels binnen de selectie (of huidige alinea) samenvoegen tot lopende tekst en overtollige spaties opschonen">&para;</button>
+              <button class="fav-lb-btn fav-lb-fmt-table" title="Selectie omzetten naar een markdown-tabel (tab/spatie/|-gescheiden)">&#9783;</button>
+            </div>
+            <textarea class="fav-lb-edit-textarea" spellcheck="true" lang="nl"></textarea>
+            <div class="fav-lb-diff-view" style="display:none">
+              <div class="fav-lb-diff-header">
+                <span class="fav-lb-diff-title"></span>
+                <button class="fav-lb-btn fav-lb-diff-back">&larr; Terug naar bewerken</button>
+              </div>
+              <div class="fav-lb-diff-body"></div>
+            </div>
+            <div class="fav-lb-edit-bar">
+              <span class="fav-lb-edit-status"></span>
+              <button class="fav-lb-btn fav-lb-edit-ocr" title="Vervang de tekst hieronder door een nieuwe OCR-poging op het scanbeeld">OCR opnieuw</button>
+              <button class="fav-lb-btn fav-lb-edit-cancel">Annuleren</button>
+              <button class="fav-lb-btn fav-lb-btn-primary fav-lb-edit-save">Opslaan</button>
+            </div>
+          </div>
         </div>
       </div>`;
 
@@ -200,6 +411,35 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-toggle-img')!.addEventListener('click', () => this.togglePanel('img'));
     this.el.querySelector('.fav-lb-toggle-text')!.addEventListener('click', () => this.togglePanel('text'));
 
+    this.el.querySelector('.fav-lb-edit')!.addEventListener('click', () => this.enterEditMode());
+    this.el.querySelector('.fav-lb-edit-cancel')!.addEventListener('click', () => this.exitEditMode());
+    this.el.querySelector('.fav-lb-edit-save')!.addEventListener('click', () => void this.saveEdit());
+    this.el.querySelector('.fav-lb-edit-ocr')!.addEventListener('click', () => void this.reOcr());
+
+    this.el.querySelector('.fav-lb-fmt-bold')!.addEventListener('click', () => this.wrapSelection('**'));
+    this.el.querySelector('.fav-lb-fmt-italic')!.addEventListener('click', () => this.wrapSelection('*'));
+    this.el.querySelector('.fav-lb-fmt-strike')!.addEventListener('click', () => this.wrapSelection('~~'));
+    this.el.querySelector('.fav-lb-fmt-heading')!.addEventListener('click', () => this.toggleHeading());
+    this.el.querySelector('.fav-lb-fmt-paragraph')!.addEventListener('click', () => this.reflowParagraph());
+    this.el.querySelector('.fav-lb-fmt-table')!.addEventListener('click', () => this.convertToTable());
+
+    this.el.querySelector('.fav-lb-history-btn')!.addEventListener('click', () => void this.toggleHistoryPanel());
+    this.el.querySelector('.fav-lb-diff-back')!.addEventListener('click', () => this.closeDiffView());
+    this.el.querySelector('.fav-lb-delete-page')!.addEventListener('click', () => void this.deleteCurrentPage());
+    this.el.querySelector('.fav-lb-consolidate')!.addEventListener('click', () => void this.consolidateCollection());
+
+    const searchInput = this.el.querySelector('.fav-lb-search-input') as HTMLInputElement;
+    let searchTimer: ReturnType<typeof setTimeout> | null = null;
+    searchInput.addEventListener('input', () => {
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => void this.runCollectionSearch(searchInput.value), 250);
+    });
+    this.el.querySelector('.fav-lb-search-btn')!.addEventListener('click', () => {
+      this.el!.querySelector('.fav-lb-search-panel')!.classList.toggle('fav-open');
+    });
+    this.el.querySelector('.fav-lb-replace-all-btn')!.addEventListener('click', () => void this.replaceAllInCollection());
+    document.addEventListener('click', this.outsideClickHandler);
+
     this.el.querySelector('.fav-lb-fullscreen')!.addEventListener('click', () => {
       if (document.fullscreenElement) void document.exitFullscreen();
       else void this.el!.requestFullscreen();
@@ -207,9 +447,9 @@ export class Lightbox {
     document.addEventListener('fullscreenchange', this.fullscreenHandler);
 
     const izBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-iz .fav-lb-zbtn'));
-    izBtns[0]?.addEventListener('click', () => this.setImgZoom(this.imgZoom / 1.3));
-    izBtns[1]?.addEventListener('click', () => this.setImgZoom(1));
-    izBtns[2]?.addEventListener('click', () => this.setImgZoom(this.imgZoom * 1.3));
+    izBtns[0]?.addEventListener('click', () => this.zoomTowardCenter(this.imgZoom / 1.3));
+    izBtns[1]?.addEventListener('click', () => { this.panX = 0; this.panY = 0; this.setImgZoom(1); });
+    izBtns[2]?.addEventListener('click', () => this.zoomTowardCenter(this.imgZoom * 1.3));
 
     const tzBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-text-bar .fav-lb-zbtn:not(.fav-lb-format-toggle)'));
     tzBtns[0]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom / 1.2));
@@ -219,6 +459,16 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-format-toggle')!.addEventListener('click', () => {
       this.showingAltText = !this.showingAltText;
       this.renderTextContent();
+    });
+
+    const monoBtn = this.el.querySelector('.fav-lb-mono-toggle') as HTMLButtonElement;
+    const textContentEl = this.el.querySelector('.fav-lb-text-content') as HTMLElement;
+    textContentEl.classList.toggle('fav-lb-mono', this.monoFont);
+    monoBtn.classList.toggle('fav-lb-active', this.monoFont);
+    monoBtn.addEventListener('click', () => {
+      this.monoFont = !this.monoFont;
+      textContentEl.classList.toggle('fav-lb-mono', this.monoFont);
+      monoBtn.classList.toggle('fav-lb-active', this.monoFont);
     });
 
     this.el.querySelector('.fav-lb-img')!.addEventListener('load', () => this.renderHighlights());
@@ -232,9 +482,15 @@ export class Lightbox {
 
     this.el.querySelector('.fav-lb-img-wrap')!.addEventListener('wheel', (e: Event) => {
       const we = e as WheelEvent;
-      if (!we.ctrlKey) return;
-      we.preventDefault();
-      this.setImgZoom(this.imgZoom * (we.deltaY < 0 ? 1.1 : 0.9));
+      if (we.ctrlKey) {
+        we.preventDefault();
+        this.zoomAt(this.imgZoom * (we.deltaY < 0 ? 1.1 : 0.9), we.clientX, we.clientY);
+      } else if (this.imgZoom > 1.01) {
+        we.preventDefault();
+        this.panX -= we.deltaX;
+        this.panY -= we.deltaY;
+        this.applyImgTransform();
+      }
     }, { passive: false });
 
     this.el.querySelector('.fav-lb-text-content')!.addEventListener('wheel', (e: Event) => {
@@ -246,11 +502,16 @@ export class Lightbox {
 
     // Touch gestures on the image, mirroring the keyboard scheme: swipe
     // left/right pages, swipe up/down jumps to the next/previous search
-    // result, and a two-finger pinch zooms — all only while not already
-    // zoomed in, where a single-finger drag instead pans (native scroll on
-    // the now-scrollable .fav-lb-img-wrap).
+    // result, and a two-finger pinch zooms (centered on the pinch midpoint)
+    // — all only while not already zoomed in, where a single-finger drag
+    // instead pans. Panning is tracked explicitly (panX/panY), not via
+    // native scroll — a transform-scaled image doesn't register as
+    // overflowing .fav-lb-img-wrap, so scrollLeft/scrollTop never had
+    // anything to scroll to.
     let touchStartX = 0;
     let touchStartY = 0;
+    let panStartX = 0;
+    let panStartY = 0;
     let touchMode: 'none' | 'swipe' | 'pinch' = 'none';
     let pinchStartDist = 0;
     let pinchStartZoom = 1;
@@ -267,6 +528,8 @@ export class Lightbox {
         touchMode = 'swipe';
         touchStartX = te.touches[0]!.clientX;
         touchStartY = te.touches[0]!.clientY;
+        panStartX = this.panX;
+        panStartY = this.panY;
       } else {
         touchMode = 'none';
       }
@@ -274,13 +537,27 @@ export class Lightbox {
 
     imgWrapEl.addEventListener('touchmove', (e: Event) => {
       const te = e as TouchEvent;
-      if (touchMode !== 'pinch' || te.touches.length !== 2 || pinchStartDist <= 0) return;
-      e.preventDefault(); // suppress the browser's own page-pinch-zoom
-      const ratio = touchDist(te.touches[0]!, te.touches[1]!) / pinchStartDist;
-      this.setImgZoom(pinchStartZoom * ratio);
+      if (touchMode === 'pinch' && te.touches.length === 2 && pinchStartDist > 0) {
+        e.preventDefault(); // suppress the browser's own page-pinch-zoom
+        const t0 = te.touches[0]!;
+        const t1 = te.touches[1]!;
+        const ratio = touchDist(t0, t1) / pinchStartDist;
+        this.zoomAt(pinchStartZoom * ratio, (t0.clientX + t1.clientX) / 2, (t0.clientY + t1.clientY) / 2);
+        return;
+      }
+      if (touchMode === 'swipe' && this.imgZoom > 1.01) {
+        e.preventDefault();
+        const touch = te.touches[0];
+        if (!touch) return;
+        imgWrapEl.classList.add('fav-lb-panning');
+        this.panX = panStartX + (touch.clientX - touchStartX);
+        this.panY = panStartY + (touch.clientY - touchStartY);
+        this.applyImgTransform();
+      }
     }, { passive: false });
 
     const touchEnd = (e: Event): void => {
+      imgWrapEl.classList.remove('fav-lb-panning');
       if (touchMode === 'pinch') {
         if ((e as TouchEvent).touches.length < 2) touchMode = 'none';
         return;
@@ -299,8 +576,47 @@ export class Lightbox {
       }
     };
     imgWrapEl.addEventListener('touchend', touchEnd, { passive: true });
-    imgWrapEl.addEventListener('touchcancel', () => { touchMode = 'none'; }, { passive: true });
+    imgWrapEl.addEventListener('touchcancel', () => { touchMode = 'none'; imgWrapEl.classList.remove('fav-lb-panning'); }, { passive: true });
 
+    // Mouse drag-to-pan, active only while zoomed in. pointerType is checked
+    // so this doesn't double-handle touch input, which the handlers above
+    // already own.
+    let dragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let dragPanStartX = 0;
+    let dragPanStartY = 0;
+    imgWrapEl.addEventListener('pointerdown', (e: Event) => {
+      const pe = e as PointerEvent;
+      if (pe.pointerType !== 'mouse' || this.imgZoom <= 1.01) return;
+      if (this.cropMode && pe.button === 0) return;
+      pe.preventDefault();
+      dragging = true;
+      dragStartX = pe.clientX;
+      dragStartY = pe.clientY;
+      dragPanStartX = this.panX;
+      dragPanStartY = this.panY;
+      imgWrapEl.setPointerCapture(pe.pointerId);
+      imgWrapEl.classList.add('fav-lb-panning');
+    });
+    imgWrapEl.addEventListener('pointermove', (e: Event) => {
+      if (!dragging) return;
+      const pe = e as PointerEvent;
+      this.panX = dragPanStartX + (pe.clientX - dragStartX);
+      this.panY = dragPanStartY + (pe.clientY - dragStartY);
+      this.applyImgTransform();
+    });
+    const stopDragPan = (e: Event): void => {
+      if (!dragging) return;
+      dragging = false;
+      imgWrapEl.classList.remove('fav-lb-panning');
+      const pe = e as PointerEvent;
+      if (imgWrapEl.hasPointerCapture(pe.pointerId)) imgWrapEl.releasePointerCapture(pe.pointerId);
+    };
+    imgWrapEl.addEventListener('pointerup', stopDragPan);
+    imgWrapEl.addEventListener('pointercancel', stopDragPan);
+
+    this.setupCropSelect();
     this.setupResizer();
 
     document.addEventListener('keydown', this.keyHandler);
@@ -337,6 +653,183 @@ export class Lightbox {
   // Lets the user drag the bar between the image and text panels instead of
   // being stuck with a fixed split — persisted per-orientation so it stays
   // put across pages and future opens, not just the current view.
+  // Drag-select a rectangle on the scan image, then OCR just that region
+  // via Document AI — for a small snippet the model missed or garbled on
+  // the full page. Draws in plain screen coordinates against
+  // .fav-lb-img-outer (never transformed), independent of the image's own
+  // pan/zoom, so no transform math is needed here at all.
+  private setupCropSelect(): void {
+    const el = this.el!;
+    const imgOuterEl = el.querySelector('.fav-lb-img-outer') as HTMLElement;
+    const cropRectEl = el.querySelector('.fav-lb-crop-rect') as HTMLElement;
+    const cropToggleBtn = el.querySelector('.fav-lb-crop-toggle') as HTMLButtonElement;
+    const engineSelect = el.querySelector('.fav-lb-crop-engine') as HTMLSelectElement;
+    const localUrlInput = el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement;
+
+    const savedEngine = localStorage.getItem('avpvhFavOcrEngine');
+    if (savedEngine && ['docai', 'tesseract', 'local'].includes(savedEngine)) {
+      engineSelect.value = savedEngine;
+    }
+    localUrlInput.value = localStorage.getItem('avpvhFavLocalOcrUrl') || 'http://localhost:5001/v1/convert/file';
+    localUrlInput.style.display = engineSelect.value === 'local' ? '' : 'none';
+
+    localUrlInput.addEventListener('change', () => {
+      localStorage.setItem('avpvhFavLocalOcrUrl', localUrlInput.value.trim());
+    });
+    engineSelect.addEventListener('change', () => {
+      localStorage.setItem('avpvhFavOcrEngine', engineSelect.value);
+      localUrlInput.style.display = engineSelect.value === 'local' ? '' : 'none';
+    });
+
+    cropToggleBtn.addEventListener('click', () => {
+      this.cropMode = !this.cropMode;
+      cropToggleBtn.classList.toggle('fav-lb-active', this.cropMode);
+      imgOuterEl.classList.toggle('fav-lb-crop-active', this.cropMode);
+      if (!this.cropMode) cropRectEl.style.display = 'none';
+    });
+
+    imgOuterEl.addEventListener('pointerdown', (e: Event) => {
+      if (!this.cropMode) return;
+      const pe = e as PointerEvent;
+      if (pe.button !== 0) return;
+      if ((pe.target as HTMLElement).closest('.fav-lb-crop-tools, .fav-lb-crop-result, .fav-lb-iz')) return;
+      const rect = imgOuterEl.getBoundingClientRect();
+      this.cropDragStart = { x: pe.clientX - rect.left, y: pe.clientY - rect.top };
+      Object.assign(cropRectEl.style, { left: `${this.cropDragStart.x}px`, top: `${this.cropDragStart.y}px`, width: '0px', height: '0px', display: 'block' });
+      imgOuterEl.setPointerCapture(pe.pointerId);
+      e.preventDefault();
+    });
+    imgOuterEl.addEventListener('pointermove', (e: Event) => {
+      if (!this.cropMode || !this.cropDragStart) return;
+      const pe = e as PointerEvent;
+      const rect = imgOuterEl.getBoundingClientRect();
+      const curX = pe.clientX - rect.left;
+      const curY = pe.clientY - rect.top;
+      Object.assign(cropRectEl.style, {
+        left: `${Math.min(this.cropDragStart.x, curX)}px`,
+        top: `${Math.min(this.cropDragStart.y, curY)}px`,
+        width: `${Math.abs(curX - this.cropDragStart.x)}px`,
+        height: `${Math.abs(curY - this.cropDragStart.y)}px`,
+      });
+    });
+    const finishCropDrag = (e: Event): void => {
+      if (!this.cropMode || !this.cropDragStart) return;
+      const pe = e as PointerEvent;
+      if (imgOuterEl.hasPointerCapture(pe.pointerId)) imgOuterEl.releasePointerCapture(pe.pointerId);
+      this.cropDragStart = null;
+      void this.finishCropSelection();
+    };
+    imgOuterEl.addEventListener('pointerup', finishCropDrag);
+    imgOuterEl.addEventListener('pointercancel', () => { this.cropDragStart = null; cropRectEl.style.display = 'none'; });
+
+    el.querySelector('.fav-lb-crop-close')!.addEventListener('click', () => {
+      (el.querySelector('.fav-lb-crop-result') as HTMLElement).style.display = 'none';
+    });
+    el.querySelector('.fav-lb-crop-insert')!.addEventListener('click', () => {
+      const cropText = (el.querySelector('.fav-lb-crop-text') as HTMLTextAreaElement).value;
+      if (!cropText) return;
+      if (!this.editing) this.enterEditMode();
+      const ta = this.editTextarea();
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      this.setTextareaValue(ta, ta.value.slice(0, start) + cropText + ta.value.slice(end), start, start + cropText.length);
+      (el.querySelector('.fav-lb-crop-result') as HTMLElement).style.display = 'none';
+    });
+  }
+
+  private async finishCropSelection(): Promise<void> {
+    const el = this.el!;
+    const item = this.items[this.idx];
+    const cropRectEl = el.querySelector('.fav-lb-crop-rect') as HTMLElement;
+    const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
+    if (!item || item.collection == null || item.page == null) {
+      cropRectEl.style.display = 'none';
+      return;
+    }
+
+    const rectBox = cropRectEl.getBoundingClientRect();
+    cropRectEl.style.display = 'none';
+    const imgBox = imgEl.getBoundingClientRect();
+    if (rectBox.width < 8 || rectBox.height < 8 || imgBox.width === 0 || imgBox.height === 0) return;
+
+    const x = (rectBox.left - imgBox.left) / imgBox.width;
+    const y = (rectBox.top - imgBox.top) / imgBox.height;
+    const w = rectBox.width / imgBox.width;
+    const h = rectBox.height / imgBox.height;
+
+    const engine = (el.querySelector('.fav-lb-crop-engine') as HTMLSelectElement).value;
+    const resultEl = el.querySelector('.fav-lb-crop-result') as HTMLElement;
+    const previewEl = el.querySelector('.fav-lb-crop-preview') as HTMLImageElement;
+    const textEl = el.querySelector('.fav-lb-crop-text') as HTMLTextAreaElement;
+    const statusEl = el.querySelector('.fav-lb-crop-status') as HTMLElement;
+    const titleEl = el.querySelector('.fav-lb-crop-result-header span') as HTMLElement;
+    resultEl.style.display = 'flex';
+    previewEl.removeAttribute('src');
+    textEl.value = '';
+    titleEl.textContent = 'OCR-resultaat van selectie';
+    statusEl.textContent = 'OCR bezig…';
+
+    if (engine === 'local') {
+      await this.runLocalOcr(imgEl, x, y, w, h, previewEl, textEl, statusEl, titleEl);
+      return;
+    }
+
+    const { ok, data } = await this.restPost<{ text?: string; crop_img_url?: string; engine?: string }>(
+      'scan/crop-ocr', { collection: item.collection, page_number: item.page, crop: { x, y, w, h }, engine },
+    );
+    if (!ok) { statusEl.textContent = data.message || 'OCR mislukt.'; return; }
+    previewEl.src = data.crop_img_url ?? '';
+    titleEl.textContent = `OCR-resultaat (${data.engine === 'tesseract' ? 'Tesseract' : 'Document AI'})`;
+    textEl.value = data.text ?? '';
+    statusEl.textContent = '';
+  }
+
+  // Crops the already-loaded scan image client-side and posts it directly
+  // to the same local docling-serve container the local_editor_server.py
+  // local editor already uses (POST /v1/convert/file, multipart) — the
+  // production VPS has too little CPU/RAM for a heavier, more accurate
+  // OCR model than server-side Tesseract. Browsers exempt
+  // http://localhost from the mixed-content block even on an https page,
+  // so this needs no tunnel or VPN, just docling-serve actually running.
+  private async runLocalOcr(
+    imgEl: HTMLImageElement, x: number, y: number, w: number, h: number,
+    previewEl: HTMLImageElement, textEl: HTMLTextAreaElement, statusEl: HTMLElement, titleEl: HTMLElement,
+  ): Promise<void> {
+    const url = (this.el!.querySelector('.fav-lb-crop-local-url') as HTMLInputElement).value.trim();
+    if (!url) { statusEl.textContent = 'Vul eerst het adres van docling-serve in.'; return; }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(imgEl.naturalWidth * w));
+    canvas.height = Math.max(1, Math.round(imgEl.naturalHeight * h));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { statusEl.textContent = 'Kon selectie niet uitsnijden.'; return; }
+    ctx.drawImage(
+      imgEl,
+      imgEl.naturalWidth * x, imgEl.naturalHeight * y, canvas.width, canvas.height,
+      0, 0, canvas.width, canvas.height,
+    );
+    previewEl.src = canvas.toDataURL('image/png');
+    titleEl.textContent = 'OCR-resultaat (lokale Docker — Docling)';
+
+    const blob: Blob | null = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) { statusEl.textContent = 'Kon selectie niet uitsnijden.'; return; }
+
+    const form = new FormData();
+    form.append('files', blob, 'crop.png');
+    form.append('ocr_preset', 'easyocr');
+    form.append('ocr_lang', 'nl');
+
+    try {
+      const res = await fetch(url, { method: 'POST', body: form });
+      const resJson = await res.json().catch(() => ({})) as { document?: { md_content?: string; text_content?: string }; detail?: string };
+      if (!res.ok) { statusEl.textContent = resJson.detail || 'Lokale OCR mislukt.'; return; }
+      textEl.value = (resJson.document?.md_content || resJson.document?.text_content || '').trim();
+      statusEl.textContent = '';
+    } catch {
+      statusEl.textContent = `Kon docling-serve niet bereiken op ${url}. Draait de container? (Zelfde container als de local editor gebruikt.)`;
+    }
+  }
+
   private setupResizer(): void {
     const el = this.el!;
     const resizer = el.querySelector('.fav-lb-resizer') as HTMLElement;
@@ -400,8 +893,9 @@ export class Lightbox {
     this.el = null;
     document.removeEventListener('keydown', this.keyHandler);
     document.removeEventListener('fullscreenchange', this.fullscreenHandler);
-    if (this.currentBlobUrl) URL.revokeObjectURL(this.currentBlobUrl);
-    this.currentBlobUrl = null;
+    document.removeEventListener('click', this.outsideClickHandler);
+    this.pageImageCache.forEach(url => URL.revokeObjectURL(url));
+    this.pageImageCache.clear();
     this.pdfDocs.forEach(task => { void task.destroy().catch(() => undefined); });
     this.pdfDocs.clear();
     this.onClose?.();
@@ -412,6 +906,33 @@ export class Lightbox {
     const item = this.items[this.idx]!;
     const el = this.el!;
     const token = ++this.showToken;
+
+    // A page navigation always leaves edit mode — an in-progress edit on
+    // the previous page shouldn't silently carry over to this one.
+    this.editing = false;
+    (el.querySelector('.fav-lb-edit-wrap') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-text-content') as HTMLElement).style.display = '';
+    this.closeDiffView();
+    el.querySelector('.fav-lb-search-panel')?.classList.remove('fav-open');
+    el.querySelector('.fav-lb-history-panel')?.classList.remove('fav-open');
+
+    // A page navigation also always leaves crop-select mode and clears any
+    // pending crop result — both are tied to whichever image is on screen.
+    this.cropMode = false;
+    this.cropDragStart = null;
+    (el.querySelector('.fav-lb-crop-toggle') as HTMLElement).classList.remove('fav-lb-active');
+    (el.querySelector('.fav-lb-img-outer') as HTMLElement).classList.remove('fav-lb-crop-active');
+    (el.querySelector('.fav-lb-crop-rect') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-crop-result') as HTMLElement).style.display = 'none';
+
+    const isEditablePage = item.collection != null && item.page != null;
+    const editBtn = el.querySelector('.fav-lb-edit') as HTMLButtonElement;
+    editBtn.style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
+    (el.querySelector('.fav-lb-history-wrap') as HTMLElement).style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
+    (el.querySelector('.fav-lb-delete-page') as HTMLElement).style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
+    (el.querySelector('.fav-lb-consolidate') as HTMLElement).style.display = this.cfg.canEdit && item.collection != null ? '' : 'none';
+    (el.querySelector('.fav-lb-search-wrap') as HTMLElement).style.display = item.collection != null ? '' : 'none';
+    (el.querySelector('.fav-lb-search-replace-row') as HTMLElement).style.display = this.cfg.canEdit ? '' : 'none';
 
     const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
     const loadingEl = el.querySelector('.fav-lb-loading') as HTMLElement;
@@ -431,6 +952,8 @@ export class Lightbox {
     const hasImage = item.kind !== 'text';
     toggleImgBtn.style.display = hasImage ? '' : 'none';
     toggleTextBtn.style.display = hasImage ? '' : 'none';
+    (el.querySelector('.fav-lb-crop-tools') as HTMLElement).style.display =
+      this.cfg.canEdit && isEditablePage && hasImage ? '' : 'none';
 
     const textWrapEl = el.querySelector('.fav-lb-text-wrap') as HTMLElement;
     const resizerEl = el.querySelector('.fav-lb-resizer') as HTMLElement;
@@ -520,10 +1043,434 @@ export class Lightbox {
     }
   }
 
+  private enterEditMode(): void {
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    this.editing = true;
+    if (this.hiddenPanel === 'text') this.togglePanel('text');
+    this.closeDiffView();
+    (el.querySelector('.fav-lb-text-content') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-edit-wrap') as HTMLElement).style.display = 'flex';
+    const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+    textarea.value = item.rawText ?? '';
+    (el.querySelector('.fav-lb-edit-status') as HTMLElement).textContent = '';
+    textarea.focus();
+  }
+
+  private exitEditMode(): void {
+    const el = this.el!;
+    this.editing = false;
+    (el.querySelector('.fav-lb-edit-wrap') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-text-content') as HTMLElement).style.display = '';
+  }
+
+  private async saveEdit(): Promise<void> {
+    if (this.saving) return;
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+    const statusEl = el.querySelector('.fav-lb-edit-status') as HTMLElement;
+    const saveBtn = el.querySelector('.fav-lb-edit-save') as HTMLButtonElement;
+
+    this.saving = true;
+    saveBtn.disabled = true;
+    statusEl.textContent = 'Opslaan…';
+    try {
+      const res = await fetch(`${this.cfg.restRoot}scan/edit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
+        body: JSON.stringify({ collection: item.collection, page_number: item.page, text: textarea.value }),
+      });
+      const data = await res.json().catch(() => ({})) as { text?: string; text_format?: string; message?: string };
+      if (!res.ok) {
+        statusEl.textContent = data.message || 'Opslaan mislukt.';
+        return;
+      }
+      const text = data.text ?? textarea.value;
+      const isMd = data.text_format === 'md' || looksLikeMarkdown(text);
+      item.rawText = text;
+      item.text = isMd ? renderMarkdown(text) : renderPlain(text);
+      item.textAlt = isMd ? renderPlain(text) : renderMarkdown(text);
+      this.showingAltText = false;
+      this.exitEditMode();
+      this.renderTextContent();
+    } catch {
+      statusEl.textContent = 'Opslaan mislukt.';
+    } finally {
+      this.saving = false;
+      saveBtn.disabled = false;
+    }
+  }
+
+  private async reOcr(): Promise<void> {
+    if (this.saving) return;
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+    const statusEl = el.querySelector('.fav-lb-edit-status') as HTMLElement;
+    const ocrBtn = el.querySelector('.fav-lb-edit-ocr') as HTMLButtonElement;
+
+    if (textarea.value.trim() && !confirm('De huidige tekst in het vak vervangen door een nieuwe OCR-poging?')) return;
+
+    const engine = (el.querySelector('.fav-lb-crop-engine') as HTMLSelectElement)?.value || 'docai';
+
+    this.saving = true;
+    ocrBtn.disabled = true;
+    statusEl.textContent = 'OCR bezig…';
+
+    if (engine === 'local') {
+      const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
+      const url = (el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement)?.value.trim()
+        || localStorage.getItem('avpvhFavLocalOcrUrl')
+        || 'http://localhost:5001/v1/convert/file';
+
+      const canvas = document.createElement('canvas');
+      canvas.width = imgEl.naturalWidth || imgEl.width;
+      canvas.height = imgEl.naturalHeight || imgEl.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx || canvas.width === 0 || canvas.height === 0) {
+        statusEl.textContent = 'Paginabeeld niet geladen.';
+        this.saving = false;
+        ocrBtn.disabled = false;
+        return;
+      }
+      ctx.drawImage(imgEl, 0, 0);
+      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) {
+        statusEl.textContent = 'Kon paginabeeld niet verwerken.';
+        this.saving = false;
+        ocrBtn.disabled = false;
+        return;
+      }
+      const form = new FormData();
+      form.append('files', blob, 'page.png');
+      form.append('ocr_preset', 'easyocr');
+      form.append('ocr_lang', 'nl');
+
+      try {
+        const res = await fetch(url, { method: 'POST', body: form });
+        const resJson = await res.json().catch(() => ({})) as {
+          document?: { md_content?: string; text_content?: string };
+          detail?: string;
+        };
+        if (!res.ok) {
+          statusEl.textContent = resJson.detail || 'Lokale OCR mislukt.';
+          return;
+        }
+        textarea.value = (resJson.document?.md_content || resJson.document?.text_content || '').trim();
+        statusEl.textContent = 'OCR klaar (Lokale Docker) — nog niet opgeslagen.';
+      } catch {
+        statusEl.textContent = `Kon docling-serve niet bereiken op ${url}. Draait de container?`;
+      } finally {
+        this.saving = false;
+        ocrBtn.disabled = false;
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch(`${this.cfg.restRoot}scan/ocr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
+        body: JSON.stringify({ collection: item.collection, page_number: item.page, engine }),
+      });
+      const data = await res.json().catch(() => ({})) as { text?: string; message?: string };
+      if (!res.ok) {
+        statusEl.textContent = data.message || 'OCR mislukt.';
+        return;
+      }
+      textarea.value = data.text ?? '';
+      statusEl.textContent = 'OCR klaar — nog niet opgeslagen.';
+    } catch {
+      statusEl.textContent = 'OCR mislukt.';
+    } finally {
+      this.saving = false;
+      ocrBtn.disabled = false;
+    }
+  }
+
+  private editTextarea(): HTMLTextAreaElement {
+    return this.el!.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+  }
+
+  private setTextareaValue(ta: HTMLTextAreaElement, value: string, selStart: number, selEnd: number): void {
+    ta.value = value;
+    ta.selectionStart = selStart;
+    ta.selectionEnd = selEnd;
+    ta.focus();
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  // Wraps the selection in a markdown marker (**bold**, *italic*,
+  // ~~strikethrough~~); toggles it off if the selection is already wrapped.
+  private wrapSelection(marker: string): void {
+    const ta = this.editTextarea();
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const selected = ta.value.slice(start, end);
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(end);
+
+    if (selected.length >= marker.length * 2 && selected.startsWith(marker) && selected.endsWith(marker)) {
+      const inner = selected.slice(marker.length, selected.length - marker.length);
+      this.setTextareaValue(ta, before + inner + after, start, start + inner.length);
+    } else {
+      this.setTextareaValue(ta, before + marker + selected + marker + after, start + marker.length, end + marker.length);
+    }
+  }
+
+  // Toggles a "## " prefix on the line the cursor/selection starts on.
+  // Selects the whole resulting line rather than trying to preserve the
+  // exact prior cursor offset through a length change.
+  private toggleHeading(): void {
+    const ta = this.editTextarea();
+    const start = ta.selectionStart;
+    const lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+    let lineEnd = ta.value.indexOf('\n', start);
+    if (lineEnd === -1) lineEnd = ta.value.length;
+    const line = ta.value.slice(lineStart, lineEnd);
+    const newLine = /^#{1,6}\s/.test(line) ? line.replace(/^#{1,6}\s+/, '') : `## ${line}`;
+    this.setTextareaValue(ta, ta.value.slice(0, lineStart) + newLine + ta.value.slice(lineEnd), lineStart, lineStart + newLine.length);
+  }
+
+  // Joins hard-wrapped lines within the selection (or, with no selection,
+  // the current blank-line-delimited paragraph) into flowing text — the
+  // single most common cleanup a scanned page's OCR text needs, since the
+  // original page layout's line breaks get baked in as real newlines.
+  // Blank-line paragraph breaks within the selection are preserved.
+  private reflowParagraph(): void {
+    const ta = this.editTextarea();
+    let start = ta.selectionStart;
+    let end = ta.selectionEnd;
+    if (start === end) {
+      const text = ta.value;
+      const prevBreak = text.lastIndexOf('\n\n', Math.max(0, start - 1));
+      start = prevBreak === -1 ? 0 : prevBreak + 2;
+      const nextBreak = text.indexOf('\n\n', end);
+      end = nextBreak === -1 ? text.length : nextBreak;
+    }
+    const selected = ta.value.slice(start, end);
+    const joined = selected
+      .split(/\n{2,}/)
+      // Join lines into flowing text, then collapse any run of 2+ spaces
+      // left over from column-aligned OCR source layout — a plain <textarea>
+      // shows those literally (unlike the rendered read-only view, where
+      // HTML's default whitespace collapsing already hides them).
+      .map(block => block.split('\n').map(l => l.trim()).filter(Boolean).join(' ').replace(/ {2,}/g, ' '))
+      .join('\n\n');
+    this.setTextareaValue(ta, ta.value.slice(0, start) + joined + ta.value.slice(end), start, start + joined.length);
+  }
+
+  // Converts selected lines (tab-, multi-space-, or |-delimited) into a
+  // proper GFM markdown table with a header separator row.
+  private convertToTable(): void {
+    const ta = this.editTextarea();
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const selected = ta.value.slice(start, end);
+    if (!selected.trim()) return;
+
+    const splitLine = (l: string): string[] => {
+      const trimmed = l.trim();
+      if (trimmed.includes('|')) {
+        return trimmed.split('|').map(c => c.trim()).filter((c, i, arr) => c !== '' || (i !== 0 && i !== arr.length - 1));
+      }
+      if (trimmed.includes('\t')) return trimmed.split('\t').map(c => c.trim());
+      return trimmed.split(/ {2,}/).map(c => c.trim());
+    };
+
+    const rows = selected.split('\n').map(l => l.trim()).filter(Boolean).map(splitLine);
+    if (!rows.length) return;
+    const cols = Math.max(...rows.map(r => r.length));
+    const pad = (r: string[]): string[] => { while (r.length < cols) r.push(''); return r; };
+    const header = pad(rows[0]!);
+    const body = rows.slice(1).map(pad);
+    const md = [
+      `| ${header.join(' | ')} |`,
+      `| ${header.map(() => '---').join(' | ')} |`,
+      ...body.map(r => `| ${r.join(' | ')} |`),
+    ].join('\n');
+
+    this.setTextareaValue(ta, ta.value.slice(0, start) + md + ta.value.slice(end), start, start + md.length);
+  }
+
+  private async restPost<T extends object>(path: string, body: unknown): Promise<{ ok: boolean; data: T & { message?: string } }> {
+    const res = await fetch(`${this.cfg.restRoot}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({})) as T & { message?: string };
+    return { ok: res.ok, data };
+  }
+
+  private async toggleHistoryPanel(): Promise<void> {
+    const el = this.el!;
+    const panel = el.querySelector('.fav-lb-history-panel') as HTMLElement;
+    if (panel.classList.contains('fav-open')) {
+      panel.classList.remove('fav-open');
+      return;
+    }
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+
+    const { ok, data } = await this.restPost<{ versions: Array<{ version: number; exists: boolean; mtime: string | null }> }>(
+      'scan/history', { collection: item.collection, page_number: item.page },
+    );
+    if (!ok || !data.versions) return;
+
+    panel.innerHTML = data.versions.map(v => v.exists
+      ? `<div class="fav-lb-history-row"><span>.bak${v.version}${v.version === 1 ? ' (meest recent)' : ''} — ${v.mtime}</span><button type="button" class="fav-lb-btn fav-lb-history-diff-btn" data-version="${v.version}">Diff</button></div>`
+      : `<div class="fav-lb-history-row fav-lb-history-empty"><span>.bak${v.version} — (geen back-up)</span></div>`,
+    ).join('');
+    panel.querySelectorAll<HTMLButtonElement>('.fav-lb-history-diff-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        panel.classList.remove('fav-open');
+        void this.openDiffView(Number(btn.dataset['version']));
+      });
+    });
+    panel.classList.add('fav-open');
+  }
+
+  private async openDiffView(version: number): Promise<void> {
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    if (!this.editing) this.enterEditMode();
+
+    const { ok, data } = await this.restPost<{ old_text?: string; new_text?: string }>(
+      'scan/diff', { collection: item.collection, page_number: item.page, version },
+    );
+    if (!ok || data.old_text == null) return;
+
+    const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
+    const diffView = el.querySelector('.fav-lb-diff-view') as HTMLElement;
+    el.querySelector('.fav-lb-diff-title')!.textContent = `Diff — .bak${version} vs. huidige tekst in het bewerkveld`;
+    el.querySelector('.fav-lb-diff-body')!.innerHTML = diffWords(data.old_text, textarea.value);
+    diffView.style.display = 'flex';
+    textarea.style.display = 'none';
+  }
+
+  private closeDiffView(): void {
+    const el = this.el;
+    if (!el) return;
+    (el.querySelector('.fav-lb-diff-view') as HTMLElement).style.display = 'none';
+    (el.querySelector('.fav-lb-edit-textarea') as HTMLElement).style.display = '';
+  }
+
+  private async deleteCurrentPage(): Promise<void> {
+    const item = this.items[this.idx];
+    if (!item || item.collection == null || item.page == null) return;
+    const ok = confirm(
+      `Pagina ${item.page} verwijderen?\n` +
+      `Het bestand wordt verplaatst naar de submap 'verwijderd' (niet permanent gewist) ` +
+      `en latere pagina's schuiven een nummer terug.`,
+    );
+    if (!ok) return;
+
+    const collection = item.collection;
+    const pageNum = item.page;
+    const { ok: reqOk, data } = await this.restPost<object>('scan/delete', { collection, page_number: pageNum });
+    if (!reqOk) { alert((data as { message?: string }).message || 'Verwijderen mislukt.'); return; }
+
+    // Reflect the server-side renumbering locally instead of re-fetching the
+    // whole collection: drop this item, shift every later page in the same
+    // collection down by one.
+    this.items = this.items
+      .filter((_, i) => i !== this.idx)
+      .map(it => (it.collection === collection && it.page != null && it.page > pageNum)
+        ? { ...it, page: it.page - 1, caption: it.caption.replace(/pagina \d+/i, `pagina ${it.page - 1}`) }
+        : it);
+
+    if (!this.items.length) { this.close(); return; }
+    this.show(Math.min(this.idx, this.items.length - 1));
+  }
+
+  private async consolidateCollection(): Promise<void> {
+    const item = this.items[this.idx];
+    if (!item || item.collection == null) return;
+    const ok = confirm(
+      `consolidated_extracted_text.txt opnieuw genereren voor "${item.collection}"?\n` +
+      `De huidige inhoud van dat bestand wordt overschreven.`,
+    );
+    if (!ok) return;
+
+    const { ok: reqOk, data } = await this.restPost<{ pages?: number }>('scan/consolidate', { collection: item.collection });
+    alert(reqOk ? `Overzicht bijgewerkt (${data.pages ?? 0} pagina's).` : (data.message || 'Genereren mislukt.'));
+  }
+
+  private async runCollectionSearch(query: string): Promise<void> {
+    const el = this.el!;
+    const resultsEl = el.querySelector('.fav-lb-search-results') as HTMLElement;
+    const item = this.items[this.idx];
+    if (query.length < 2 || item?.collection == null) { resultsEl.innerHTML = ''; return; }
+
+    const data = await meiliSearch<{ hits?: Array<{ page_number?: number; _formatted?: { text?: string } }> }>(
+      this.cfg, this.cfg.mediaIndex, {
+        q: query,
+        filter: `collection = "${item.collection}"`,
+        limit: 30,
+        attributesToRetrieve: ['page_number'],
+        attributesToCrop: ['text'],
+        cropLength: 24,
+        attributesToHighlight: ['text'],
+      },
+    );
+
+    if (!data) { resultsEl.innerHTML = '<div class="fav-lb-search-empty">Zoeken mislukt.</div>'; return; }
+
+    const hits = data.hits ?? [];
+    if (!hits.length) {
+      resultsEl.innerHTML = '<div class="fav-lb-search-empty">Geen resultaten.</div>';
+      return;
+    }
+    resultsEl.innerHTML = hits.map(h =>
+      `<button type="button" class="fav-lb-search-result" data-page="${h.page_number ?? ''}">` +
+      `<span class="fav-lb-search-result-label">Pagina ${h.page_number ?? '?'}</span>` +
+      `<span class="fav-lb-search-result-snippet">${h._formatted?.text ?? ''}</span></button>`,
+    ).join('');
+    resultsEl.querySelectorAll<HTMLButtonElement>('.fav-lb-search-result').forEach(btn => {
+      const pageNum = Number(btn.dataset['page']);
+      btn.addEventListener('click', () => {
+        const idx = this.items.findIndex(it => it.collection === item.collection && it.page === pageNum);
+        if (idx < 0) return;
+        el.querySelector('.fav-lb-search-panel')!.classList.remove('fav-open');
+        this.show(idx);
+      });
+    });
+  }
+
+  private async replaceAllInCollection(): Promise<void> {
+    const el = this.el!;
+    const item = this.items[this.idx];
+    if (!item || item.collection == null) return;
+    const query = (el.querySelector('.fav-lb-search-input') as HTMLInputElement).value;
+    const replacement = (el.querySelector('.fav-lb-replace-input') as HTMLInputElement).value;
+    const regex = (el.querySelector('.fav-lb-search-regex') as HTMLInputElement).checked;
+    const caseSensitive = (el.querySelector('.fav-lb-search-case') as HTMLInputElement).checked;
+    const wholeWord = (el.querySelector('.fav-lb-search-word') as HTMLInputElement).checked;
+    if (!query) return;
+
+    const ok = confirm(
+      `"${query}" vervangen door "${replacement}" in alle pagina's van "${item.collection}" op de server?\n` +
+      `Dit kan niet ongedaan gemaakt worden via de editor (wel via de .bak-bestanden per pagina).`,
+    );
+    if (!ok) return;
+
+    const { ok: reqOk, data } = await this.restPost<{ total_replacements?: number; pages_changed?: string[] }>(
+      'scan/replace', { collection: item.collection, query, replacement, regex, case_sensitive: caseSensitive, whole_word: wholeWord },
+    );
+    if (!reqOk) { alert(data.message || 'Vervangen mislukt.'); return; }
+    alert(`${data.total_replacements ?? 0} vervanging(en) doorgevoerd in ${data.pages_changed?.length ?? 0} pagina('s).`);
+
+    if (data.pages_changed && data.pages_changed.length > 0) this.show(this.idx);
+  }
+
   private setImage(src: string): void {
     const imgEl = this.el!.querySelector('.fav-lb-img') as HTMLImageElement;
-    if (this.currentBlobUrl) URL.revokeObjectURL(this.currentBlobUrl);
-    this.currentBlobUrl = src.startsWith('blob:') ? src : null;
     imgEl.src = src;
   }
 
@@ -539,22 +1486,43 @@ export class Lightbox {
       const doc = await task.promise;
       const page = await doc.getPage(pageNum);
       const viewport = page.getViewport({ scale: 2 });
+
+      // Rects are cheap (a text-content scan) and depend on the current
+      // search, so always recompute them — but reuse the rendered image
+      // itself when this exact page was already rendered this session.
+      const rects = await this.findHighlightRects(page, viewport, terms);
+      const cacheKey = `${url}#${pageNum}`;
+      const cached = this.pageImageCache.get(cacheKey);
+      if (cached) {
+        this.pageImageCache.delete(cacheKey); // bump recency for the LRU cap
+        this.pageImageCache.set(cacheKey, cached);
+        return { blobUrl: cached, rects };
+      }
+
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width;
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d')!;
       await page.render({ canvasContext: ctx, viewport }).promise;
 
-      const rects = await this.findHighlightRects(page, viewport, terms);
-
       const blobUrl = await new Promise<string | null>(resolve => {
         canvas.toBlob(blob => resolve(blob ? URL.createObjectURL(blob) : null), 'image/png');
       });
+      if (blobUrl) this.cachePageImage(cacheKey, blobUrl);
       return { blobUrl, rects };
     } catch (err) {
       console.error('[avpvh-find-and-view] PDF page render failed:', err);
       return { blobUrl: null, rects: [] };
     }
+  }
+
+  private cachePageImage(key: string, blobUrl: string): void {
+    this.pageImageCache.set(key, blobUrl);
+    if (this.pageImageCache.size <= Lightbox.PAGE_CACHE_LIMIT) return;
+    const oldestKey = this.pageImageCache.keys().next().value;
+    if (oldestKey === undefined) return;
+    URL.revokeObjectURL(this.pageImageCache.get(oldestKey)!);
+    this.pageImageCache.delete(oldestKey);
   }
 
   // Highlights matched search terms directly on the rendered PDF page by
@@ -622,9 +1590,40 @@ export class Lightbox {
 
   private setImgZoom(z: number): void {
     this.imgZoom = Math.max(0.2, Math.min(8, z));
-    const scale = `scale(${this.imgZoom})`;
-    (this.el!.querySelector('.fav-lb-img') as HTMLElement).style.transform = scale;
-    (this.el!.querySelector('.fav-lb-highlights') as HTMLElement).style.transform = scale;
+    this.applyImgTransform();
+    // Cursor hints that the image is now draggable, matching the drag-to-pan
+    // handlers set up in open() — only meaningful once zoomed in.
+    this.el!.querySelector('.fav-lb-img-wrap')!.classList.toggle('fav-lb-zoomed', this.imgZoom > 1.01);
+  }
+
+  private applyImgTransform(): void {
+    const t = `translate(${this.panX}px, ${this.panY}px) scale(${this.imgZoom})`;
+    (this.el!.querySelector('.fav-lb-img') as HTMLElement).style.transform = t;
+    (this.el!.querySelector('.fav-lb-highlights') as HTMLElement).style.transform = t;
+  }
+
+  // Zooms to newZoom while keeping whatever point is under (clientX, clientY)
+  // fixed on screen — the standard "zoom to cursor" behavior for wheel/pinch
+  // zoom. transform-origin is the element's own center, so the math is done
+  // relative to .fav-lb-img-wrap's center (the image is flex-centered there,
+  // and that position doesn't move when the image's own transform changes).
+  private zoomAt(newZoom: number, clientX: number, clientY: number): void {
+    const clamped = Math.max(0.2, Math.min(8, newZoom));
+    const rect = (this.el!.querySelector('.fav-lb-img-wrap') as HTMLElement).getBoundingClientRect();
+    const ax = clientX - (rect.left + rect.width / 2);
+    const ay = clientY - (rect.top + rect.height / 2);
+    const k = clamped / this.imgZoom;
+    this.panX = ax + k * (this.panX - ax);
+    this.panY = ay + k * (this.panY - ay);
+    this.setImgZoom(clamped);
+  }
+
+  // Button-triggered zoom has no cursor position to anchor to — zoom toward
+  // the current view's own center instead, which just scales the existing
+  // pan proportionally and keeps whatever's centered, centered.
+  private zoomTowardCenter(newZoom: number): void {
+    const rect = (this.el!.querySelector('.fav-lb-img-wrap') as HTMLElement).getBoundingClientRect();
+    this.zoomAt(newZoom, rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
   private setTxtZoom(z: number): void {

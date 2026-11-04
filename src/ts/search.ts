@@ -5,7 +5,8 @@ import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { Lightbox, type LightboxItem } from './lightbox';
 import { BrowseMode } from './browse';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
-import type { FavConfig, MeiliHit } from './types';
+import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
+import { showSearchError, hideSearchError } from './meili';
 
 function parseContains(q: string): string {
   return q
@@ -127,7 +128,9 @@ function initInstance(cfg: FavConfig): void {
   search.addWidgets(widgets);
   search.start();
 
+  search.on('error', () => showSearchError(cfg));
   search.on('render', () => {
+    if (search.status !== 'error') hideSearchError(cfg);
     (['media', 'content'] as const).forEach(src => {
       const hitsEl = document.getElementById(`${cfg.uid}-hits-${src}`);
       const pagEl  = document.getElementById(`${cfg.uid}-pag-${src}`);
@@ -140,7 +143,7 @@ function initInstance(cfg: FavConfig): void {
   });
 
   // Lightbox — created early so BrowseMode can reference it
-  const lb = cfg.showMedia ? new Lightbox() : null;
+  const lb = cfg.showMedia ? new Lightbox(cfg) : null;
 
   // Browse mode — activated when search box is empty. Typing is itself a form
   // of filtering, so an empty query shows top-level browse overviews (media
@@ -188,7 +191,70 @@ function initInstance(cfg: FavConfig): void {
   let pgTreeUl: HTMLUListElement | null = null;
   let postTreeUl: HTMLUListElement | null = null;
 
-  function makeTopFolder(label: string, onToggle: () => void): { li: HTMLLIElement; ul: HTMLUListElement } {
+  // Clicking a tree checkbox normally just toggles it (check/uncheck this
+  // branch, cascading to its own descendants, same as native behavior).
+  // A 4-click cycle on the *same* checkbox: click 1/2 are the normal
+  // toggle; click 3 solos the branch (it and its descendants checked,
+  // everything else within the same top-level tree unchecked); click 4
+  // restores every checkbox in that tree to exactly what it was before
+  // click 1 — undoing the whole cycle rather than just toggling again.
+  // Click 5 then starts a fresh cycle from that restored state.
+  function attachCycleCheckbox(
+    cb: HTMLInputElement,
+    li: HTMLElement,
+    hasChildren: boolean,
+    scopeRoot: () => HTMLElement | null,
+    onFilterChange: () => void,
+    updateParents: (el: HTMLElement) => void,
+  ): void {
+    let phase = 0;
+    let snapshot: Map<HTMLInputElement, boolean> | null = null;
+    cb.addEventListener('change', () => {
+      const root = scopeRoot();
+      if (phase === 0 && root) {
+        // Starting a new cycle: remember every checkbox in scope so click 4
+        // can restore it. The native click already toggled `cb` itself, so
+        // its pre-click value is the opposite of its current one.
+        snapshot = new Map(
+          [...root.querySelectorAll<HTMLInputElement>('input[type=checkbox]')]
+            .map(c => [c, c === cb ? !c.checked : c.checked]),
+        );
+      }
+      phase = (phase + 1) % 4;
+
+      if (phase === 3 && root) {
+        // Solo: this branch checked, everything else in the tree unchecked.
+        const mine = new Set<HTMLInputElement>([...li.querySelectorAll<HTMLInputElement>('input[type=checkbox]')]);
+        mine.add(cb);
+        root.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
+          c.checked = mine.has(c);
+          c.indeterminate = false;
+        });
+        root.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(leaf => updateParents(leaf));
+      } else if (phase === 0 && root && snapshot) {
+        // Restore: undo the whole cycle.
+        snapshot.forEach((checked, c) => { c.checked = checked; c.indeterminate = false; });
+        root.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(leaf => updateParents(leaf));
+        snapshot = null;
+      } else {
+        if (hasChildren) {
+          li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
+            c.checked = cb.checked;
+            c.indeterminate = false;
+          });
+        }
+        updateParents(li);
+      }
+      onFilterChange();
+    });
+  }
+
+  function makeTopFolder(
+    rootUl: HTMLElement,
+    label: string,
+    onToggle: () => void,
+    updateParents: (el: HTMLElement) => void = () => { /* no ancestor above this folder */ },
+  ): { li: HTMLLIElement; ul: HTMLUListElement } {
     const ul = document.createElement('ul');
     ul.className = 'fav-col-tree';
 
@@ -209,13 +275,7 @@ function initInstance(cfg: FavConfig): void {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = true;
-    cb.addEventListener('change', () => {
-      ul.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
-        c.checked = cb.checked;
-        c.indeterminate = false;
-      });
-      onToggle();
-    });
+    attachCycleCheckbox(cb, li, true, () => rootUl, onToggle, updateParents);
     lbl.appendChild(cb);
     lbl.append(` ${label}`);
     row.appendChild(lbl);
@@ -225,21 +285,28 @@ function initInstance(cfg: FavConfig): void {
   }
 
   if (filterTreeEl) {
-    const rootUl = document.createElement('ul');
-    rootUl.className = 'fav-col-tree';
-    filterTreeEl.appendChild(rootUl);
+    const outerUl = document.createElement('ul');
+    outerUl.className = 'fav-col-tree';
+    filterTreeEl.appendChild(outerUl);
+
+    // A root "Alles" checkbox above Media/Pagina's/Berichten: a single
+    // always-available way to select everything again, regardless of
+    // whatever solo/toggle state the buckets below are in.
+    const allFolder = makeTopFolder(outerUl, 'Alles', () => { applyCollectionFilter(); applyPageFilter(); });
+    outerUl.appendChild(allFolder.li);
+    const rootUl = allFolder.ul;
 
     if (cfg.showMedia) {
-      const { li, ul } = makeTopFolder('Media', () => applyCollectionFilter());
+      const { li, ul } = makeTopFolder(rootUl, 'Media', () => applyCollectionFilter(), updateColParents);
       rootUl.appendChild(li);
       colTreeUl = ul;
     }
     if (cfg.showContent) {
-      const { li, ul } = makeTopFolder('Pagina\'s', () => applyPageFilter());
+      const { li, ul } = makeTopFolder(rootUl, 'Pagina\'s', () => applyPageFilter(), updateColParents);
       rootUl.appendChild(li);
       pgTreeUl = ul;
 
-      const berichtenFolder = makeTopFolder('Berichten', () => applyPageFilter());
+      const berichtenFolder = makeTopFolder(rootUl, 'Berichten', () => applyPageFilter(), updateColParents);
       rootUl.appendChild(berichtenFolder.li);
       postTreeUl = berichtenFolder.ul;
     }
@@ -301,6 +368,37 @@ function initInstance(cfg: FavConfig): void {
     }
   }
 
+  // A folder that only wraps a single child is pointless to browse into —
+  // skip straight through any such chain to the first node that's an
+  // actual leaf or actually branches, so its tile can show real content
+  // instead of a one-item sublist. Returns the extra path segments skipped,
+  // so a click can jump directly past them.
+  function collapseSingleChild(node: PgNode): { node: PgNode; extraSlugs: string[] } {
+    let current = node;
+    let entries = Object.entries(current.children);
+    const extraSlugs: string[] = [];
+    while (entries.length === 1) {
+      const [slug, child] = entries[0]!;
+      extraSlugs.push(slug);
+      current = child;
+      entries = Object.entries(current.children);
+    }
+    return { node: current, extraSlugs };
+  }
+
+  // Subfolder name preview inside a folder tile, mirroring avpvh-gallery's
+  // directory sublist (up to 7 names, last one truncated to signal overflow).
+  function renderDirSublist(children: PgNode[]): string {
+    const shown = children.slice(0, 7);
+    const hasTruncated = shown.length === 7 && children.length > 7;
+    const items = shown.map((child, i) => {
+      const isTruncated = hasTruncated && i === 6;
+      const label = isTruncated ? child.title.slice(0, 5) + '…' : child.title;
+      return `<div class="fav-dir-sublist-item${isTruncated ? ' fav-dir-sublist-more' : ''}">${label}</div>`;
+    }).join('');
+    return `<div class="fav-dir-sublist">${items}</div>`;
+  }
+
   function renderPageBrowseLevel(path: string[]): void {
     if (!pageBrowseGrid || !pageTreeData) return;
     pageBrowsePath = path;
@@ -319,14 +417,17 @@ function initInstance(cfg: FavConfig): void {
       return;
     }
     for (const [slug, nd] of entries) {
-      const hasChildren = Object.keys(nd.children).length > 0;
+      const { node: effective, extraSlugs } = collapseSingleChild(nd);
+      const children = Object.values(effective.children).sort((a, b) => a.title.localeCompare(b.title, 'nl'));
+      const hasChildren = children.length > 0;
       const card = document.createElement(hasChildren ? 'div' : 'a') as HTMLElement;
       card.className = 'fav-col-card';
-      if (!hasChildren) (card as HTMLAnchorElement).href = nd.url;
+      if (!hasChildren) (card as HTMLAnchorElement).href = effective.url;
+      const thumbHtml = hasChildren ? renderDirSublist(children) : '<span class="fav-col-icon">📄</span>';
       card.innerHTML =
-        `<div class="fav-col-thumb"><span class="fav-col-icon">${hasChildren ? '📁' : '📄'}</span></div>` +
-        `<div class="fav-col-label">${nd.title}</div>`;
-      if (hasChildren) card.addEventListener('click', () => renderPageBrowseLevel([...path, slug]));
+        `<div class="fav-col-thumb${hasChildren ? ' fav-col-no-thumb' : ''}">${thumbHtml}</div>` +
+        `<div class="fav-col-label">${effective.title}</div>`;
+      if (hasChildren) card.addEventListener('click', () => renderPageBrowseLevel([...path, slug, ...extraSlugs]));
       pageBrowseGrid.appendChild(card);
     }
   }
@@ -341,8 +442,9 @@ function initInstance(cfg: FavConfig): void {
       .then(r => r.json())
       .then((data: { hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }) => {
         const docs = (data.hits ?? []).filter(d => d.url);
-        if (!docs.length) return;
-        const baseUrl = docs[0].url.replace(/^(https?:\/\/[^/]+).*/, '$1');
+        const firstDoc = docs[0];
+        if (!firstDoc) return;
+        const baseUrl = firstDoc.url.replace(/^(https?:\/\/[^/]+).*/, '$1');
         const urlToTitle = new Map(docs.map(d => [d.url, d.title]));
 
         const pageDocs = docs.filter(d => d.type !== 'post');
@@ -362,22 +464,23 @@ function initInstance(cfg: FavConfig): void {
           const path = doc.url.slice(baseUrl.length).replace(/^\/|\/$/g, '');
           if (!path) continue;
           const segs = path.split('/');
+          const firstSeg = segs[0] ?? '';
 
           // If any segment is an auto-slug, put in overige (top-level only: first segment)
-          if (isAutoSlug(segs[0])) {
-            overige.push({ url: doc.url, title: doc.title || slugTitle(segs[0]), children: {} });
+          if (isAutoSlug(firstSeg)) {
+            overige.push({ url: doc.url, title: doc.title || slugTitle(firstSeg), children: {} });
             continue;
           }
 
           let node = pgTree;
-          for (let i = 0; i < segs.length; i++) {
-            const slug = segs[i];
-            if (!node[slug]) {
+          segs.forEach((slug, i) => {
+            let child = node[slug];
+            if (!child) {
               const partUrl = `${baseUrl}/${segs.slice(0, i + 1).join('/')}/`;
-              node[slug] = { url: partUrl, title: urlToTitle.get(partUrl) ?? slugTitle(slug), children: {} };
+              child = node[slug] = { url: partUrl, title: urlToTitle.get(partUrl) ?? slugTitle(slug), children: {} };
             }
-            node = node[slug].children;
-          }
+            node = child.children;
+          });
         }
 
         // Add overige bucket if needed
@@ -436,13 +539,12 @@ function initInstance(cfg: FavConfig): void {
             cb.type = 'checkbox';
             cb.checked = true;
             cb.dataset['pageUrl'] = nd.url;
-            cb.addEventListener('change', () => {
-              if (hasChildren) {
-                li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => { c.checked = cb.checked; c.indeterminate = false; });
-              }
-              applyPageFilter();
-              updatePgParents(li);
-            });
+            attachCycleCheckbox(
+              cb, li, hasChildren,
+              () => (pgTreeUl?.contains(li) ? pgTreeUl : postTreeUl),
+              applyPageFilter,
+              updatePgParents,
+            );
             label.appendChild(cb);
             label.append(` ${nd.title}`);
             row.appendChild(label);
@@ -563,11 +665,11 @@ function initInstance(cfg: FavConfig): void {
     for (const [path, count] of Object.entries(cols)) {
       const parts = path.split('/');
       let node = tree;
-      for (let i = 0; i < parts.length; i++) {
-        if (!node[parts[i]]) node[parts[i]] = { _path: parts.slice(0, i + 1).join('/'), _count: 0, _children: {} };
-        if (i === parts.length - 1) node[parts[i]]._count = count;
-        node = node[parts[i]]._children;
-      }
+      parts.forEach((part, i) => {
+        const child = (node[part] ??= { _path: parts.slice(0, i + 1).join('/'), _count: 0, _children: {} });
+        if (i === parts.length - 1) child._count = count;
+        node = child._children;
+      });
     }
     return renderColTreeNode(tree);
   }
@@ -601,16 +703,7 @@ function initInstance(cfg: FavConfig): void {
       cb.type = 'checkbox';
       cb.checked = true;
       if (!hasChildren) cb.dataset['leafPath'] = info._path;
-      cb.addEventListener('change', () => {
-        if (hasChildren) {
-          li.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
-            c.checked = cb.checked;
-            c.indeterminate = false;
-          });
-        }
-        applyCollectionFilter();
-        updateColParents(li);
-      });
+      attachCycleCheckbox(cb, li, hasChildren, () => colTreeUl, applyCollectionFilter, updateColParents);
       label.appendChild(cb);
       label.append(` ${name}`);
       if (!hasChildren) {
@@ -700,7 +793,7 @@ function initInstance(cfg: FavConfig): void {
             q: query,
             filter: `collection = "${collection}"`,
             limit: 5000,
-            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'text', 'collection', 'text_format', 'has_image'],
+            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
             ...(highlight ? { attributesToHighlight: ['text'], highlightPreTag: '<em>', highlightPostTag: '</em>' } : {}),
           }),
         }).then(r => r.json());
@@ -711,7 +804,7 @@ function initInstance(cfg: FavConfig): void {
       Promise.all([fetchHits('', false), q ? fetchHits(q, true) : Promise.resolve({ hits: [] })])
         .then(([allData, matchData]) => {
           const allHits = (allData.hits ?? []).filter(h => h.url);
-          allHits.sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+          allHits.sort(compareHitOrder);
           if (!allHits.length) { lb.close(); return; }
 
           const matchMap = new Map((matchData.hits ?? []).map(h => [h.id, h]));
@@ -732,8 +825,8 @@ function initInstance(cfg: FavConfig): void {
               ? Array.from(new Set(Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean)))
               : [];
             return isPdf
-              ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text: html, textAlt: htmlAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch }
-              : { url: h.url, caption, text: html, textAlt: htmlAlt, isMatch, ...(hasImage ? {} : { kind: 'text' as const }) };
+              ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text: html, textAlt: htmlAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch, collection: h.collection, rawText: h.text }
+              : { url: h.url, caption, text: html, textAlt: htmlAlt, isMatch, collection: h.collection, rawText: h.text, page: h.page_number ?? undefined, ...(hasImage ? {} : { kind: 'text' as const }) };
           });
 
           const startIdx = allHits.findIndex(h => h.id === hitId);

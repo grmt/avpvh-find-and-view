@@ -6,7 +6,7 @@
     "authors": [
         {
             "name": "grmt",
-            "email": "info@example.invalid"
+            "email": "admin@example.invalid"
         }
     ],
     "autoload": {
@@ -21,21 +21,20 @@
     },
     "config": {
         "allow-plugins": {
-            "dealerdirect/phpcodesniffer-composer-installer": true
-        },
-        "platform": {
-            "php": "8.2"
+            "dealerdirect/phpcodesniffer-composer-installer": true,
+            "php-http/discovery": true
         }
     },
     "require": {
-        "php": "^8.2",
+        "php": "^8.4",
         "guzzlehttp/guzzle": "^7.0",
         "guzzlehttp/promises": "^2.0",
         "monolog/monolog": "^3.0",
         "psr/cache": "^3.0",
         "psr/http-message": "^2.0",
         "woocommerce/action-scheduler": "^4.0",
-        "meilisearch/meilisearch-php": "^1.16"
+        "meilisearch/meilisearch-php": "^1.16",
+        "smalot/pdfparser": "^2.0"
     },
     "suggest": {
         "google/apiclient": "Required for Google Drive storage backend (^2.15)",
