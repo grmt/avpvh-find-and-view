@@ -1,7 +1,7 @@
 name: "CI"
 on:
   push:
-    branches: "*"
+    branches: "**"
   pull_request:
   # The release workflow runs CI and publishes its build.
   workflow_call:
