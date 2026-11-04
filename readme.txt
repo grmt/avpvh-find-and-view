@@ -4,7 +4,7 @@ Tags: search, meilisearch, scans, pdf, archive
 Requires at least: 7.1
 Tested up to: 7.1
 Requires PHP: 8.4
-Stable tag: 0.1.71
+Stable tag: 0.1.72
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
