@@ -44,8 +44,8 @@
     "require-dev": {
         "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
         "humbug/php-scoper": "^0.18",
-        "phan/phan": "^5.1",
-        "phpmd/phpmd": "^2.6",
+        "phan/phan": "^6.0",
+        "phpmd/phpmd": "^3.0",
         "phpstan/phpstan": "^2.0",
         "phpunit/phpunit": "^13.4",
         "skaut/wordpress-stubs": "^2.1",
