@@ -37,10 +37,6 @@ jobs:
         run: |
           composer install -n --prefer-dist --no-dev --optimize-autoloader
 
-      - name: "Check platform requirements"
-        run: |
-          composer check-platform-reqs --no-dev
-
       - name: "Setup Node.js"
         uses: actions/setup-node@v7
         with:
@@ -77,7 +73,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: "build-artifact"
-          path: build
+          # The plugin files at the artifact root, as the shared checks expect.
+          path: build/avpvh-find-and-view
 
   lint:
     name: "Lint"
@@ -122,50 +119,16 @@ jobs:
         run: |
           npm run lint:ts:typecheck
 
-  # No PHPUnit tests yet: until then, check that every PHP file at least
-  # parses on the floor and on the newest PHP.
-  php-syntax:
-    name: "PHP ${{ matrix.php }} syntax"
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        php: ["8.4", "8.5"]
-    steps:
-      - name: "Checkout"
-        uses: actions/checkout@v7
-
-      - name: "Setup PHP"
-        uses: shivammathur/setup-php@2.40.0
-        with:
-          php-version: ${{ matrix.php }}
-          coverage: none
-
-      - name: "Lint PHP files"
-        run: |
-          find avpvh-find-and-view.php src/php -name '*.php' -print0 | xargs -0 -n1 php -l
-
-  plugin-check:
-    name: "Plugin check"
-    runs-on: ubuntu-latest
+  # Shared with the other own plugins: dependencies on the PHP floor, syntax on
+  # 8.4 and 8.5, PHPCompatibility and the WordPress.org Plugin Check.
+  plugin-checks:
+    name: "Shared"
     needs: build
-    steps:
-      - name: "Download build artifact"
-        uses: actions/download-artifact@v8
-        with:
-          name: "build-artifact"
-          path: .
-
-      # The action's wp-env runs PHP 8.3 unless told otherwise, below the plugin's
-      # floor. The action overwrites .wp-env.json; wp-env merges the override on top.
-      - name: "Set wp-env PHP version"
-        run: |
-          echo '{"phpVersion": "${{ env.php-version }}"}' > .wp-env.override.json
-
-      - name: "Run plugin check"
-        uses: wordpress/plugin-check-action@v1
-        with:
-          build-dir: avpvh-find-and-view
-          ignore-codes: |
-            missing_composer_json_file
-            PluginCheck.CodeAnalysis.Offloading.OffloadedContent
-            plugin_updater_detected
+    uses: grmt/wp-plugin-ci/.github/workflows/plugin-checks.yml@main
+    with:
+      slug: avpvh-find-and-view
+      artifact: build-artifact
+      ignore-codes: |
+        missing_composer_json_file
+        PluginCheck.CodeAnalysis.Offloading.OffloadedContent
+        plugin_updater_detected
