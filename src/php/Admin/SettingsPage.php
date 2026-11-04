@@ -52,6 +52,9 @@ final class SettingsPage {
 		if ( isset( $input['content_index'] ) )  $s['content_index']  = sanitize_text_field( $input['content_index'] );
 		if ( isset( $input['post_types'] ) )   $s['post_types']   = array_map( 'sanitize_key', (array) $input['post_types'] );
 		if ( isset( $input['storage'] ) )      $s['storage']      = array_map( 'sanitize_key', (array) $input['storage'] );
+		// An unchecked checkbox is absent from the form, so only change it on a
+		// full form submit (meili_url is always present there).
+		if ( isset( $input['meili_url'] ) )    $s['require_login'] = ! empty( $input['require_login'] );
 		return $s;
 	}
 
@@ -118,6 +121,17 @@ final class SettingsPage {
 									<code style="font-size:.85em">(<?php echo esc_html( $pt->name ); ?>)</code>
 								</label>
 							<?php endforeach; ?>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Toegang', 'avpvh-find-and-view' ); ?></th>
+						<td>
+							<label>
+								<input type="checkbox" name="fav_settings[require_login]" value="1"
+									<?php checked( ! empty( $s['require_login'] ) ); ?>>
+								<?php esc_html_e( 'Alleen voor ingelogde gebruikers', 'avpvh-find-and-view' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'Toont het zoeken en de ECLI-index alleen aan ingelogde gebruikers. Anonieme bezoekers krijgen een link naar de loginpagina en de Meilisearch-key komt niet in de pagina.', 'avpvh-find-and-view' ); ?></p>
 						</td>
 					</tr>
 					<tr>
