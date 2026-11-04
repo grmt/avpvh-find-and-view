@@ -1,6 +1,6 @@
 {
   "name": "avpvh-find-and-view",
-  "version": "0.1.67",
+  "version": "0.1.69",
   "description": "Find and view photos, archaeological finds, and scanned documents stored in Google Drive",
   "license": "MIT",
   "author": "grmt",
@@ -25,10 +25,11 @@
     "test": "run-p -c --aggregate-output test:*"
   },
   "dependencies": {
-    "@meilisearch/instant-meilisearch": "^0.19",
+    "@meilisearch/instant-meilisearch": "^0.31",
     "dompurify": "^3.4.13",
     "instantsearch.js": "^4",
     "marked": "^18.0.9",
+    "meilisearch": "^0.57.0",
     "pdfjs-dist": "^4.10.38",
     "photoswipe": "^5.4.4"
   },

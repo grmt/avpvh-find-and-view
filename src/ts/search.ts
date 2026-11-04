@@ -78,26 +78,29 @@ function initInstance(cfg: FavConfig): void {
     placeholderSearch: false,
   });
 
-  const emptyResults = (reqs: Parameters<typeof baseClient.search>[0]) =>
+  // search() also takes a single composition request since 0.2x; InstantSearch
+  // only ever sends the array of per-index requests.
+  type SearchRequests = Extract<Parameters<typeof baseClient.search>[0], readonly unknown[]>;
+
+  const emptyResults = (reqs: SearchRequests) =>
     Promise.resolve({ results: reqs.map(() => ({ hits: [], nbHits: 0, page: 0, nbPages: 0, hitsPerPage: cfg.perPage, processingTimeMS: 0, exhaustiveNbHits: true as const, query: '', params: '' })) });
 
   const client = {
-    search: (requests: Parameters<typeof baseClient.search>[0]) => {
+    search: (requests: SearchRequests) => {
       const sbInput = root.querySelector<HTMLInputElement>('.ais-SearchBox-input');
       const q = sbInput?.value.trim() ?? '';
       if (cfg.browseMode && !q) return emptyResults(requests);
-      return baseClient.search(
-        requests.map(req => {
-          const isMedia = (req as { indexName: string }).indexName === cfg.mediaIndex;
-          const isContent = (req as { indexName: string }).indexName === cfg.contentIndex;
-          const filter = isMedia
-            ? buildFilter(collectionFilter, substringMode, q)
-            : isContent
-            ? (pageFilter ?? '')
-            : '';
-          return { ...req, params: { ...(req as { params: object }).params, filters: filter } };
-        }),
-      );
+      const filtered: SearchRequests = requests.map(req => {
+        const filter = req.indexName === cfg.mediaIndex
+          ? buildFilter(collectionFilter, substringMode, q)
+          : req.indexName === cfg.contentIndex
+          ? (pageFilter ?? '')
+          : '';
+        return { ...req, params: { ...req.params, filters: filter } };
+      });
+      // InstantSearch types searchClient as a union of client shapes, so search()
+      // only accepts the intersection of their arguments; call the array form.
+      return (baseClient as { search(r: SearchRequests): ReturnType<typeof baseClient.search> }).search(filtered);
     },
   };
 
