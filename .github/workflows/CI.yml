@@ -1,0 +1,171 @@
+name: "CI"
+on:
+  push:
+    branches: "**"
+  pull_request:
+  # The release workflow runs CI and publishes its build.
+  workflow_call:
+env:
+  php-version: 8.4
+  node-version: 24.16.0
+  npm-version: 11.13.0
+  cache-version: 1
+jobs:
+  build:
+    name: "Build"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v7
+
+      - name: "Setup PHP"
+        uses: shivammathur/setup-php@2.40.0
+        with:
+          php-version: ${{ env.php-version }}
+          coverage: none
+
+      - name: "Cache Composer dependencies"
+        uses: actions/cache@v6
+        with:
+          path: "~/.composer/cache"
+          key: composer-dependencies-${{ runner.os }}-${{ env.cache-version }}-${{ hashFiles('composer.lock') }}
+          restore-keys: |
+            composer-dependencies-${{ runner.os }}-${{ env.cache-version }}-
+
+      # Production vendor/ only: it ships inside the plugin.
+      - name: "Install Composer dependencies"
+        run: |
+          composer install -n --prefer-dist --no-dev --optimize-autoloader
+
+      - name: "Check platform requirements"
+        run: |
+          composer check-platform-reqs --no-dev
+
+      - name: "Setup Node.js"
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.node-version }}
+
+      - name: "Cache NPM dependencies"
+        uses: actions/cache@v6
+        with:
+          path: "~/.npm"
+          key: npm-dependencies-${{ runner.os }}-${{ env.cache-version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            npm-dependencies-${{ runner.os }}-${{ env.cache-version }}-
+
+      - name: "Pin npm version"
+        run: |
+          npm install -g npm@${{ env.npm-version }}
+
+      - name: "Install NPM dependencies"
+        run: |
+          npm ci
+
+      - name: "Build"
+        run: |
+          npm run build
+
+      # The same files deploy.sh puts on the server.
+      - name: "Assemble plugin"
+        run: |
+          mkdir -p build/avpvh-find-and-view/src
+          cp -r avpvh-find-and-view.php dist vendor build/avpvh-find-and-view/
+          cp -r src/php build/avpvh-find-and-view/src/
+
+      - name: "Upload artifact"
+        uses: actions/upload-artifact@v7
+        with:
+          name: "build-artifact"
+          path: build
+
+  lint:
+    name: "Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v7
+
+      - name: "Setup PHP"
+        uses: shivammathur/setup-php@2.40.0
+        with:
+          php-version: ${{ env.php-version }}
+          coverage: none
+
+      - name: "Validate composer.json"
+        run: |
+          composer validate --strict
+
+      - name: "Setup Node.js"
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.node-version }}
+
+      - name: "Cache NPM dependencies"
+        uses: actions/cache@v6
+        with:
+          path: "~/.npm"
+          key: npm-dependencies-${{ runner.os }}-${{ env.cache-version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            npm-dependencies-${{ runner.os }}-${{ env.cache-version }}-
+
+      - name: "Pin npm version"
+        run: |
+          npm install -g npm@${{ env.npm-version }}
+
+      - name: "Install NPM dependencies"
+        run: |
+          npm ci
+
+      # ESLint and Stylelint have no config in this repo yet.
+      - name: "Typecheck"
+        run: |
+          npm run lint:ts:typecheck
+
+  # No PHPUnit tests yet: until then, check that every PHP file at least
+  # parses on the floor and on the newest PHP.
+  php-syntax:
+    name: "PHP ${{ matrix.php }} syntax"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ["8.4", "8.5"]
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v7
+
+      - name: "Setup PHP"
+        uses: shivammathur/setup-php@2.40.0
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: "Lint PHP files"
+        run: |
+          find avpvh-find-and-view.php src/php -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  plugin-check:
+    name: "Plugin check"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: "Download build artifact"
+        uses: actions/download-artifact@v8
+        with:
+          name: "build-artifact"
+          path: .
+
+      # The action's wp-env runs PHP 8.3 unless told otherwise, below the plugin's
+      # floor. The action overwrites .wp-env.json; wp-env merges the override on top.
+      - name: "Set wp-env PHP version"
+        run: |
+          echo '{"phpVersion": "${{ env.php-version }}"}' > .wp-env.override.json
+
+      - name: "Run plugin check"
+        uses: wordpress/plugin-check-action@v1
+        with:
+          build-dir: avpvh-find-and-view
+          ignore-codes: |
+            missing_composer_json_file
+            PluginCheck.CodeAnalysis.Offloading.OffloadedContent
+            plugin_updater_detected

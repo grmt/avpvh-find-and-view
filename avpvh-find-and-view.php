@@ -7,8 +7,8 @@
  * Author URI:   https://github.com/grmt/avpvh-find-and-view
  * Update URI:   https://github.com/grmt/avpvh-find-and-view
  * License:      MIT
- * Requires PHP: 8.2
- * Requires at least: 6.4
+ * Requires PHP: 8.4
+ * Requires at least: 7.1
  *
  * @package avpvh-find-and-view
  */

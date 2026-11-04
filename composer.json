@@ -23,13 +23,10 @@
         "allow-plugins": {
             "dealerdirect/phpcodesniffer-composer-installer": true,
             "php-http/discovery": true
-        },
-        "platform": {
-            "php": "8.2"
         }
     },
     "require": {
-        "php": "^8.2",
+        "php": "^8.4",
         "guzzlehttp/guzzle": "^7.0",
         "guzzlehttp/promises": "^2.0",
         "monolog/monolog": "^3.0",
