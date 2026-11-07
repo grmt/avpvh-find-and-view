@@ -2,6 +2,7 @@
 
 namespace Avpvh\FindAndView\Admin;
 
+use Avpvh\FindAndView\Access\ScanEditPermission;
 use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Index\XlsxIndexer;
 use Avpvh\FindAndView\Ocr\DocumentAiClient;
@@ -79,7 +80,7 @@ final class TreeController {
 		register_rest_route( 'avpvh-fav/v1', '/scan/edit', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'edit_scan_page' ],
-			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'permission_callback' => [ ScanEditPermission::class, 'check' ],
 			'args'                => [
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
@@ -89,7 +90,7 @@ final class TreeController {
 		register_rest_route( 'avpvh-fav/v1', '/scan/ocr', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'ocr_scan_page' ],
-			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'permission_callback' => [ ScanEditPermission::class, 'check' ],
 			'args'                => [
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
@@ -98,7 +99,7 @@ final class TreeController {
 		register_rest_route( 'avpvh-fav/v1', '/scan/crop-ocr', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'crop_ocr_scan_page' ],
-			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'permission_callback' => [ ScanEditPermission::class, 'check' ],
 			'args'                => [
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
@@ -109,7 +110,7 @@ final class TreeController {
 		register_rest_route( 'avpvh-fav/v1', '/scan/history', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'scan_history' ],
-			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'permission_callback' => [ ScanEditPermission::class, 'check' ],
 			'args'                => [
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
@@ -118,7 +119,7 @@ final class TreeController {
 		register_rest_route( 'avpvh-fav/v1', '/scan/diff', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'scan_diff' ],
-			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'permission_callback' => [ ScanEditPermission::class, 'check' ],
 			'args'                => [
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
@@ -128,7 +129,7 @@ final class TreeController {
 		register_rest_route( 'avpvh-fav/v1', '/scan/delete', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'delete_scan_page' ],
-			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'permission_callback' => [ ScanEditPermission::class, 'check' ],
 			'args'                => [
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
@@ -137,7 +138,7 @@ final class TreeController {
 		register_rest_route( 'avpvh-fav/v1', '/scan/consolidate', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'consolidate_scan_collection' ],
-			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'permission_callback' => [ ScanEditPermission::class, 'check' ],
 			'args'                => [
 				'collection' => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 			],
@@ -145,7 +146,7 @@ final class TreeController {
 		register_rest_route( 'avpvh-fav/v1', '/scan/replace', [
 			'methods'             => 'POST',
 			'callback'            => [ $this, 'replace_scan_collection' ],
-			'permission_callback' => fn() => current_user_can( 'edit_posts' ),
+			'permission_callback' => [ ScanEditPermission::class, 'check' ],
 			'args'                => [
 				'collection'     => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'query'          => [ 'required' => true, 'type' => 'string' ],
@@ -190,7 +191,8 @@ final class TreeController {
 		$root = realpath( $this->scan_root() );
 		if ( ! $root ) return false;
 		$abs  = realpath( $root . '/' . $rel );
-		if ( ! $abs || ! str_starts_with( $abs, $root ) ) return false;
+		// The root itself, or something below it -- not a sibling like scans-old/.
+		if ( ! $abs || ( $abs !== $root && ! str_starts_with( $abs, $root . '/' ) ) ) return false;
 		return $abs;
 	}
 
@@ -306,7 +308,8 @@ final class TreeController {
 		$abs     = $root . '/' . $rel;
 
 		if ( ! $root ) return new \WP_Error( 'invalid', 'Invalid root', [ 'status' => 400 ] );
-		if ( ! str_starts_with( $abs, $root ) ) return new \WP_Error( 'invalid', 'Invalid path', [ 'status' => 400 ] );
+		// $abs does not exist yet, so realpath() can't resolve it: refuse any climbing.
+		if ( $rel === '' || in_array( '..', explode( '/', $rel ), true ) ) return new \WP_Error( 'invalid', 'Invalid path', [ 'status' => 400 ] );
 		if ( ! wp_mkdir_p( $abs ) ) return new \WP_Error( 'mkdir', 'Create failed', [ 'status' => 500 ] );
 
 		return new \WP_REST_Response( [ 'ok' => true ] );

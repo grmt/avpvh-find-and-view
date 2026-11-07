@@ -2,6 +2,7 @@
 
 namespace Avpvh\FindAndView\Shortcode;
 
+use Avpvh\FindAndView\Access\ScanEditPermission;
 use Avpvh\FindAndView\Settings;
 
 final class FindAndViewShortcode {
@@ -53,7 +54,7 @@ final class FindAndViewShortcode {
 			'browseMode'       => $browse_mode,
 			'browseRootLabel'  => $atts['browse_root_label'],
 			'placeholder'      => $atts['placeholder'],
-			'canEdit'          => current_user_can( 'edit_posts' ),
+			'canEdit'          => ScanEditPermission::check(),
 			'restRoot'         => rest_url( 'avpvh-fav/v1/' ),
 			'editNonce'        => wp_create_nonce( 'wp_rest' ),
 		];
