@@ -22,8 +22,8 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: build-artifact
-          # The artifact already holds the avpvh-find-and-view/ folder.
-          path: .
+          # The artifact holds the plugin files; the ZIP needs them in a folder.
+          path: avpvh-find-and-view
 
       - name: Build avpvh-find-and-view.zip
         run: |
