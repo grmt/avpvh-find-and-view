@@ -1,4 +1,4 @@
-=== AVPVH Find and View ===
+=== AV-PvH Find and View ===
 Contributors: grmt
 Tags: search, meilisearch, scans, pdf, archive
 Requires at least: 7.1

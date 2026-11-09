@@ -82,6 +82,7 @@ for site in "${sites[@]}"; do
 	rsync -av --omit-dir-times avpvh-find-and-view.php readme.txt "$dest"
 	rsync -av --omit-dir-times dist/ "${dest}dist/"
 	rsync -av --omit-dir-times src/php/ "${dest}src/php/"
+	rsync -av --delete --omit-dir-times languages/ "${dest}languages/"
 	rsync -av --delete --omit-dir-times vendor/ "${dest}vendor/"
 done
 
