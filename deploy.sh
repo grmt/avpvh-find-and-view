@@ -76,14 +76,18 @@ trap 'composer install' EXIT
 # 7. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/,
 # vendor/ mirrored with --delete so a dependency dropped from composer.json
 # actually disappears server-side too, not just stops being referenced.
+# Don't carry the local owner, group and mode over: WordPress (php-fpm, 82 with
+# groups 2000 and 9182) must be able to write the plugin folder, and the
+# server's setgid folders hand new files the right group.
+rsync_opts=(-rltv --omit-dir-times --no-owner --no-group --no-perms --chmod=D775,F664)
 for site in "${sites[@]}"; do
 	dest="${DEPLOY_HOST}:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
 
-	rsync -av --omit-dir-times avpvh-find-and-view.php readme.txt "$dest"
-	rsync -av --omit-dir-times dist/ "${dest}dist/"
-	rsync -av --omit-dir-times src/php/ "${dest}src/php/"
-	rsync -av --delete --omit-dir-times languages/ "${dest}languages/"
-	rsync -av --delete --omit-dir-times vendor/ "${dest}vendor/"
+	rsync "${rsync_opts[@]}" avpvh-find-and-view.php readme.txt "$dest"
+	rsync "${rsync_opts[@]}" dist/ "${dest}dist/"
+	rsync "${rsync_opts[@]}" src/php/ "${dest}src/php/"
+	rsync "${rsync_opts[@]}" --delete languages/ "${dest}languages/"
+	rsync "${rsync_opts[@]}" --delete vendor/ "${dest}vendor/"
 done
 
 echo "Done -- ${new_version} deployed to ${sites[*]}."
