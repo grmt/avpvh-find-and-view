@@ -1,8 +1,19 @@
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
+import { escapeHtml, highlightHtml, safeUrl } from './escape';
 
 export function renderMarkdown(src: string): string {
-  return DOMPurify.sanitize(marked.parse(src, { async: false }));
+  const fragment = DOMPurify.sanitize(marked.parse(src, { async: false }), { RETURN_DOM_FRAGMENT: true });
+  fragment.querySelectorAll<HTMLElement>('[href], [src]').forEach(el => {
+    for (const attr of ['href', 'src']) {
+      if (!el.hasAttribute(attr)) continue;
+      const url = safeUrl(el.getAttribute(attr));
+      if (url) el.setAttribute(attr, url); else el.removeAttribute(attr);
+    }
+  });
+  const container = document.createElement('div');
+  container.append(fragment);
+  return container.innerHTML;
 }
 
 const HEADING_RE = /^#{2,6}\s+\S/m;
@@ -43,10 +54,11 @@ export function looksLikeMarkdown(src: string): boolean {
   return HEADING_RE.test(src) || hasMarkdownTable(src) || EMPHASIS_RE.test(src);
 }
 
-export function renderPlain(src: string): string {
+export function renderPlain(src: string, highlighted = false): string {
   // white-space:pre-wrap so repeated spaces in the source (e.g. OCR'd
   // column/table layout) stay visible instead of collapsing to one like
   // normal HTML text -- unlike markdown mode, where whitespace collapsing
   // is expected, plain text should render faithfully to what's on disk.
-  return src.split(/\n\n+/).map(p => `<p style="margin:0 0 .8em;white-space:pre-wrap">${p.replace(/\n/g, '<br>')}</p>`).join('');
+  const html = highlighted ? highlightHtml(src) : escapeHtml(src);
+  return html.split(/\n\n+/).map(p => `<p style="margin:0 0 .8em;white-space:pre-wrap">${p.replace(/\n/g, '<br>')}</p>`).join('');
 }

@@ -1,4 +1,5 @@
 import '../../css/tree.css';
+import { escapeHtml } from '../escape';
 
 interface TreeNode {
 	name: string;
@@ -222,7 +223,7 @@ function showNormalizePreview(res: NormalizeResult) {
 	}
 
 	list.innerHTML = res.renamed.map(r =>
-		`<li><code>${r.from}</code> → <code>${r.to}</code></li>`
+		`<li><code>${escapeHtml(r.from)}</code> → <code>${escapeHtml(r.to)}</code></li>`
 	).join('');
 	apply.style.display = '';
 	panel.style.display = '';
@@ -275,14 +276,14 @@ async function remap(dry_run = true) {
 		}
 
 		const rows = (res.mappings ?? []).map(m =>
-			`<tr style="color:green"><td><code>${m.old}</code></td><td>→</td><td><code>${m.new}</code></td><td style="color:#999">(${m.pages}p)</td></tr>`
+			`<tr style="color:green"><td><code>${escapeHtml(m.old)}</code></td><td>→</td><td><code>${escapeHtml(m.new)}</code></td><td style="color:#999">(${escapeHtml(m.pages)}p)</td></tr>`
 		);
 		const unmatched = (res.unmatched ?? []).map(u =>
-			`<tr style="color:#c00"><td colspan="4"><code>${u.new}</code> — geen match in index (${u.pages}p)</td></tr>`
+			`<tr style="color:#c00"><td colspan="4"><code>${escapeHtml(u.new)}</code> — geen match in index (${escapeHtml(u.pages)}p)</td></tr>`
 		);
 
 		const oldUnmatched = (res.unmatched_old ?? []).map(o =>
-			`<tr style="color:#999"><td colspan="4"><em>In index maar niet op server:</em> <code>${o}</code></td></tr>`
+			`<tr style="color:#999"><td colspan="4"><em>In index maar niet op server:</em> <code>${escapeHtml(o)}</code></td></tr>`
 		);
 
 		if (!rows.length && !unmatched.length && !oldUnmatched.length) {
@@ -350,10 +351,10 @@ async function loadIndexStats() {
 		el.innerHTML = `<table class="widefat striped" style="font-size:.85em;max-width:600px">
 			<thead><tr><th>Index</th><th>Documenten</th><th>Status</th></tr></thead>
 			<tbody>${stats.map(s =>
-				`<tr><td><code>${s.uid}</code></td><td>${s.docs}</td><td>${s.indexing ? '⟳ bezig' : '✓ klaar'}</td></tr>`
+				`<tr><td><code>${escapeHtml(s.uid)}</code></td><td>${escapeHtml(s.docs)}</td><td>${s.indexing ? '⟳ bezig' : '✓ klaar'}</td></tr>`
 			).join('')}</tbody></table>`;
 	} catch (err) {
-		el.innerHTML = '<p>Fout: ' + err + '</p>';
+		el.textContent = 'Fout: ' + err;
 	}
 }
 
@@ -401,9 +402,9 @@ async function docSearch() {
 		res.innerHTML = `<table class="widefat striped" style="font-size:.85em">
 			<thead><tr><th>ID</th><th>Pag.</th><th>Preview</th></tr></thead>
 			<tbody>${hits.map(h => `<tr style="cursor:pointer" data-id="${encodeURIComponent(h.id)}" data-text="${encodeURIComponent(h.text ?? '')}" data-title="${encodeURIComponent((h.collection || h.id) + (h.page_number ? ' — pagina ' + h.page_number : ''))}">
-				<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><code>${h.id}</code></td>
-				<td>${h.page_number ?? ''}</td>
-				<td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(h.text ?? '').substring(0, 140)}</td>
+				<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><code>${escapeHtml(h.id)}</code></td>
+				<td>${escapeHtml(h.page_number)}</td>
+				<td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml((h.text ?? '').substring(0, 140))}</td>
 			</tr>`).join('')}</tbody></table>`;
 		res.querySelectorAll<HTMLTableRowElement>('tr[data-id]').forEach(row => {
 			row.addEventListener('click', () => {
@@ -415,7 +416,7 @@ async function docSearch() {
 			});
 		});
 	} catch (err) {
-		res.innerHTML = '<p>Fout: ' + err + '</p>';
+		res.textContent = 'Fout: ' + err;
 	}
 }
 

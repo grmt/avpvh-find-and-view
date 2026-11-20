@@ -32,7 +32,6 @@
         "monolog/monolog": "^3.0",
         "psr/cache": "^3.0",
         "psr/http-message": "^2.0",
-        "woocommerce/action-scheduler": "^4.0",
         "meilisearch/meilisearch-php": "^1.16",
         "smalot/pdfparser": "^2.0"
     },

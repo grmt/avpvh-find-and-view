@@ -31,9 +31,22 @@ final class ScanEditPermission {
 			return [];
 		}
 		$member = avpvh_get_member_by_wp_user( get_current_user_id() );
-		if ( ! is_object( $member ) || empty( $member->user_id ) ) {
+		if ( ! is_object( $member ) || empty( $member->user_id ) || ( isset( $member->status ) && $member->status !== 'active' ) ) {
 			return [];
 		}
-		return array_map( 'strtolower', \AVPVH_Directory::cached_user_groups( (string) $member->user_id ) );
+		$uid = (string) $member->user_id;
+		if ( method_exists( \AVPVH_Directory::class, 'get_user_groups' ) ) {
+			$cache_key = 'fav_scan_edit_groups_' . hash( 'sha256', $uid );
+			$groups = get_transient( $cache_key );
+			if ( ! is_array( $groups ) ) {
+				$groups = \AVPVH_Directory::get_user_groups( $uid );
+				if ( is_wp_error( $groups ) || ! is_array( $groups ) ) {
+					return [];
+				}
+				set_transient( $cache_key, $groups, 60 );
+			}
+			return array_map( 'strtolower', $groups );
+		}
+		return array_map( 'strtolower', \AVPVH_Directory::cached_user_groups( $uid ) );
 	}
 }

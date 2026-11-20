@@ -4,12 +4,26 @@ namespace Avpvh\FindAndView\Index;
 
 /** Converts XLSX worksheets into small, searchable text documents. */
 final class XlsxIndexer {
-	private const ROWS_PER_DOCUMENT = 100;
+	private const ROWS_PER_DOCUMENT            = 100;
+	private const MAX_ZIP_FILE_BYTES           = 20971520;  // 20 MiB
+	private const MAX_ENTRY_BYTES              = 16777216;  // 16 MiB per XML member
+	private const MAX_TOTAL_UNCOMPRESSED_BYTES = 52428800;  // 50 MiB total across parsed XML members
+	private const MAX_SHEETS                   = 50;
+	private const MAX_SHARED_STRINGS           = 100000;
+	private const MAX_ROWS_PER_SHEET           = 20000;
+	private const MAX_COLUMNS_PER_ROW          = 100;
 
 	/** @return list<array<string,mixed>> */
 	public static function from_file( \SplFileInfo $file, string $root, string $base_url ): array {
 		if ( ! class_exists( \ZipArchive::class ) ) {
 			throw new \RuntimeException( 'The PHP zip extension is required to index XLSX files.' );
+		}
+		if ( $file->isLink() ) {
+			throw new \RuntimeException( 'Refusing to index symlinked XLSX file.' );
+		}
+		$file_size = $file->getSize();
+		if ( $file_size === false || $file_size > self::MAX_ZIP_FILE_BYTES ) {
+			throw new \RuntimeException( 'XLSX file exceeds maximum allowed size.' );
 		}
 
 		$zip = new \ZipArchive();
@@ -18,17 +32,18 @@ final class XlsxIndexer {
 		}
 
 		try {
-			$shared     = self::shared_strings( $zip );
-			$sheets     = self::sheets( $zip );
-			$date_styles = self::date_styles( $zip );
-			$date_1904   = self::uses_1904_dates( $zip );
+			$total_bytes = 0;
+			$shared      = self::shared_strings( $zip, $total_bytes );
+			$sheets      = self::sheets( $zip, $total_bytes );
+			$date_styles = self::date_styles( $zip, $total_bytes );
+			$date_1904   = self::uses_1904_dates( $zip, $total_bytes );
 			$rel_dir = ltrim( str_replace( $root, '', $file->getPath() ), '/' );
 			$book    = $file->getBasename( '.' . $file->getExtension() );
 			$url     = $base_url . ( $rel_dir !== '' ? '/' . $rel_dir : '' ) . '/' . rawurlencode( $file->getFilename() );
 			$docs    = [];
 
 			foreach ( $sheets as $sheet_index => $sheet ) {
-				$xml = $zip->getFromName( $sheet['path'] );
+				$xml = self::read_zip_entry( $zip, $sheet['path'], $total_bytes );
 				if ( ! is_string( $xml ) ) continue;
 
 				$rows = self::rows( $xml, $shared, $date_styles, $date_1904 );
@@ -61,14 +76,41 @@ final class XlsxIndexer {
 		}
 	}
 
+	/**
+	 * Reads a single XML member from the archive after checking its declared
+	 * uncompressed size against per-entry and cumulative limits (size guard).
+	 */
+	private static function read_zip_entry( \ZipArchive $zip, string $name, int &$total_bytes ): ?string {
+		$stat = $zip->statName( $name );
+		if ( ! is_array( $stat ) ) return null;
+		$size = (int) ( $stat['size'] ?? 0 );
+		if ( $size < 0 || $size > self::MAX_ENTRY_BYTES ) {
+			throw new \RuntimeException( 'XLSX XML entry exceeds maximum uncompressed size.' );
+		}
+		if ( $total_bytes + $size > self::MAX_TOTAL_UNCOMPRESSED_BYTES ) {
+			throw new \RuntimeException( 'XLSX archive exceeds maximum total uncompressed size.' );
+		}
+		$xml = $zip->getFromName( $name, self::MAX_ENTRY_BYTES + 1 );
+		if ( ! is_string( $xml ) ) return null;
+		$actual = strlen( $xml );
+		if ( $actual > self::MAX_ENTRY_BYTES || $total_bytes + $actual > self::MAX_TOTAL_UNCOMPRESSED_BYTES ) {
+			throw new \RuntimeException( 'XLSX XML entry exceeded allowed uncompressed size.' );
+		}
+		$total_bytes += $actual;
+		return $xml;
+	}
+
 	/** @return list<string> */
-	private static function shared_strings( \ZipArchive $zip ): array {
-		$xml = $zip->getFromName( 'xl/sharedStrings.xml' );
+	private static function shared_strings( \ZipArchive $zip, int &$total_bytes ): array {
+		$xml = self::read_zip_entry( $zip, 'xl/sharedStrings.xml', $total_bytes );
 		if ( ! is_string( $xml ) ) return [];
 		$doc = new \DOMDocument();
 		if ( ! @$doc->loadXML( $xml, LIBXML_NONET | LIBXML_COMPACT ) ) return [];
 		$result = [];
 		foreach ( $doc->getElementsByTagName( 'si' ) as $item ) {
+			if ( count( $result ) >= self::MAX_SHARED_STRINGS ) {
+				throw new \RuntimeException( 'XLSX exceeds maximum shared string count.' );
+			}
 			$value = '';
 			foreach ( $item->getElementsByTagName( 't' ) as $text ) $value .= $text->textContent;
 			$result[] = $value;
@@ -77,22 +119,30 @@ final class XlsxIndexer {
 	}
 
 	/** @return list<array{name:string,path:string}> */
-	private static function sheets( \ZipArchive $zip ): array {
-		$workbook_xml = $zip->getFromName( 'xl/workbook.xml' );
-		$rels_xml     = $zip->getFromName( 'xl/_rels/workbook.xml.rels' );
+	private static function sheets( \ZipArchive $zip, int &$total_bytes ): array {
+		$workbook_xml = self::read_zip_entry( $zip, 'xl/workbook.xml', $total_bytes );
+		$rels_xml     = self::read_zip_entry( $zip, 'xl/_rels/workbook.xml.rels', $total_bytes );
 		if ( ! is_string( $workbook_xml ) || ! is_string( $rels_xml ) ) return [];
 
 		$rels_doc = new \DOMDocument();
-		$rels_doc->loadXML( $rels_xml, LIBXML_NONET | LIBXML_COMPACT );
+		if ( ! @$rels_doc->loadXML( $rels_xml, LIBXML_NONET | LIBXML_COMPACT ) ) return [];
 		$rels = [];
 		foreach ( $rels_doc->getElementsByTagName( 'Relationship' ) as $rel ) {
-			$rels[ $rel->getAttribute( 'Id' ) ] = 'xl/' . ltrim( $rel->getAttribute( 'Target' ), '/' );
+			if ( strcasecmp( $rel->getAttribute( 'TargetMode' ), 'External' ) === 0 ) continue;
+			$target = ltrim( $rel->getAttribute( 'Target' ), '/' );
+			if ( $target === '' || str_contains( $target, "\0" ) || str_contains( $target, '\\' ) || in_array( '..', explode( '/', $target ), true ) ) {
+				continue;
+			}
+			$rels[ $rel->getAttribute( 'Id' ) ] = str_starts_with( $target, 'xl/' ) ? $target : 'xl/' . $target;
 		}
 
 		$doc = new \DOMDocument();
-		$doc->loadXML( $workbook_xml, LIBXML_NONET | LIBXML_COMPACT );
+		if ( ! @$doc->loadXML( $workbook_xml, LIBXML_NONET | LIBXML_COMPACT ) ) return [];
 		$result = [];
 		foreach ( $doc->getElementsByTagName( 'sheet' ) as $sheet ) {
+			if ( count( $result ) >= self::MAX_SHEETS ) {
+				throw new \RuntimeException( 'XLSX exceeds maximum worksheet count.' );
+			}
 			$rel_id = $sheet->getAttributeNS( 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id' );
 			if ( isset( $rels[ $rel_id ] ) ) $result[] = [ 'name' => $sheet->getAttribute( 'name' ), 'path' => $rels[ $rel_id ] ];
 		}
@@ -100,8 +150,8 @@ final class XlsxIndexer {
 	}
 
 	/** @return array<int,true> Cell style indexes that represent dates or times. */
-	private static function date_styles( \ZipArchive $zip ): array {
-		$xml = $zip->getFromName( 'xl/styles.xml' );
+	private static function date_styles( \ZipArchive $zip, int &$total_bytes ): array {
+		$xml = self::read_zip_entry( $zip, 'xl/styles.xml', $total_bytes );
 		if ( ! is_string( $xml ) ) return [];
 		$doc = new \DOMDocument();
 		if ( ! @$doc->loadXML( $xml, LIBXML_NONET | LIBXML_COMPACT ) ) return [];
@@ -126,8 +176,8 @@ final class XlsxIndexer {
 		return $result;
 	}
 
-	private static function uses_1904_dates( \ZipArchive $zip ): bool {
-		$xml = $zip->getFromName( 'xl/workbook.xml' );
+	private static function uses_1904_dates( \ZipArchive $zip, int &$total_bytes ): bool {
+		$xml = self::read_zip_entry( $zip, 'xl/workbook.xml', $total_bytes );
 		if ( ! is_string( $xml ) ) return false;
 		$doc = new \DOMDocument();
 		if ( ! @$doc->loadXML( $xml, LIBXML_NONET | LIBXML_COMPACT ) ) return false;
@@ -143,6 +193,10 @@ final class XlsxIndexer {
 		$row_number = 0;
 		while ( $reader->read() ) {
 			if ( $reader->nodeType === \XMLReader::ELEMENT && $reader->localName === 'row' ) {
+				if ( count( $rows ) >= self::MAX_ROWS_PER_SHEET ) {
+					$reader->close();
+					throw new \RuntimeException( 'XLSX worksheet exceeds maximum row count.' );
+				}
 				$row_number = (int) ( $reader->getAttribute( 'r' ) ?: $row_number + 1 );
 			}
 			if ( $reader->nodeType !== \XMLReader::ELEMENT || $reader->localName !== 'c' ) continue;
@@ -153,16 +207,21 @@ final class XlsxIndexer {
 			$column = preg_replace( '/\d+/', '', $ref ) ?: '?';
 			$value  = '';
 			$depth  = $reader->depth;
-			while ( $reader->read() ) {
-				if ( $reader->nodeType === \XMLReader::ELEMENT && ( $reader->localName === 'v' || $reader->localName === 't' ) ) {
-					$value .= $reader->readString();
+			if ( ! $reader->isEmptyElement ) {
+				while ( $reader->read() ) {
+					if ( $reader->nodeType === \XMLReader::ELEMENT && ( $reader->localName === 'v' || $reader->localName === 't' ) ) {
+						$value .= $reader->readString();
+					}
+					if ( $reader->nodeType === \XMLReader::END_ELEMENT && $reader->localName === 'c' && $reader->depth === $depth ) break;
 				}
-				if ( $reader->nodeType === \XMLReader::END_ELEMENT && $reader->localName === 'c' && $reader->depth === $depth ) break;
 			}
 			if ( $type === 's' && ctype_digit( $value ) ) $value = $shared[ (int) $value ] ?? $value;
 			if ( isset( $date_styles[ $style ] ) && is_numeric( $value ) ) $value = self::excel_date( (float) $value, $date_1904 );
 			$value = trim( $value );
-			if ( $value !== '' ) $rows[ $row_number ][ $column ] = $value;
+			if ( $value !== '' ) {
+				if ( isset( $rows[ $row_number ] ) && count( $rows[ $row_number ] ) >= self::MAX_COLUMNS_PER_ROW ) continue;
+				$rows[ $row_number ][ $column ] = $value;
+			}
 		}
 		$reader->close();
 		return $rows;

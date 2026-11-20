@@ -2,6 +2,7 @@ import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
 import type { Lightbox, LightboxItem } from './lightbox';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 import { meiliSearch } from './meili';
+import { escapeHtml, urlAttribute, quoteFilter } from './escape';
 
 const PAGE_SIZE = 60;
 
@@ -71,18 +72,18 @@ export class BrowseMode {
   private renderBreadcrumb(path: string | null): void {
     const root = this.rootLabel();
     if (!path) {
-      this.breadcrumbEl.innerHTML = `<span class="fav-bc-current">${root}</span>`;
+      this.breadcrumbEl.innerHTML = `<span class="fav-bc-current">${escapeHtml(root)}</span>`;
       return;
     }
     const parts = path.split('/');
-    let html = `<a class="fav-bc-link" href="#" data-path="">${root}</a>`;
+    let html = `<a class="fav-bc-link" href="#" data-path="">${escapeHtml(root)}</a>`;
     parts.forEach((part, i) => {
       const partPath = parts.slice(0, i + 1).join('/');
       html += '<span class="fav-bc-sep">›</span>';
       if (i === parts.length - 1) {
-        html += `<span class="fav-bc-current">${part}</span>`;
+        html += `<span class="fav-bc-current">${escapeHtml(part)}</span>`;
       } else {
-        html += `<a class="fav-bc-link" href="#" data-path="${partPath}">${part}</a>`;
+        html += `<a class="fav-bc-link" href="#" data-path="${escapeHtml(partPath)}">${escapeHtml(part)}</a>`;
       }
     });
     this.breadcrumbEl.innerHTML = html;
@@ -165,22 +166,22 @@ export class BrowseMode {
     let thumbHtml: string;
     if (thumbs.length) {
       const n = Math.min(thumbs.length, 6);
-      const imgs = thumbs.slice(0, 6).map(u => `<img src="${u}" alt="" loading="lazy">`).join('');
+      const imgs = thumbs.slice(0, 6).map(u => `<img src="${urlAttribute(u)}" alt="" loading="lazy">`).join('');
       thumbHtml = `<div class="fav-mosaic fav-mosaic-${n}">${imgs}</div>`;
     } else {
       thumbHtml = icon ? `<span class="fav-col-icon">${icon}</span>` : '';
     }
     card.innerHTML =
       `<div class="fav-col-thumb">${thumbHtml}</div>` +
-      `<div class="fav-col-label">${label}</div>` +
-      (count !== null ? `<div class="fav-col-count">${count}</div>` : '');
+      `<div class="fav-col-label">${escapeHtml(label)}</div>` +
+      (count !== null ? `<div class="fav-col-count">${escapeHtml(count)}</div>` : '');
     return card;
   }
 
   private async fetchCoversFor(paths: string[]): Promise<Record<string, string[]>> {
     if (!paths.length) return {};
 
-    const pathToCollections: Record<string, string[]> = {};
+    const pathToCollections: Record<string, string[]> = Object.create(null);
     for (const p of paths) {
       if (p in this.allCollections) {
         pathToCollections[p] = [p];
@@ -193,7 +194,7 @@ export class BrowseMode {
     const needed = [...new Set(Object.values(pathToCollections).flat())];
     if (!needed.length) return {};
 
-    const filter = needed.map(c => `collection = "${c}"`).join(' OR ');
+    const filter = needed.map(c => `collection = ${quoteFilter(c)}`).join(' OR ');
     const data = await meiliSearch<{ hits: MeiliHit[] }>(this.cfg, this.cfg.mediaIndex, {
       q: '',
       limit: 1000,
@@ -202,14 +203,14 @@ export class BrowseMode {
     });
 
     // Up to 6 thumbs per collection, sorted by page_number asc
-    const colThumbs: Record<string, string[]> = {};
+    const colThumbs: Record<string, string[]> = Object.create(null);
     const hits = (data?.hits ?? []).filter(h => h.thumb_url).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
     for (const hit of hits) {
       const thumbs = (colThumbs[hit.collection] ??= []);
       if (thumbs.length < 6) thumbs.push(hit.thumb_url!);
     }
 
-    const result: Record<string, string[]> = {};
+    const result: Record<string, string[]> = Object.create(null);
     for (const [p, cols] of Object.entries(pathToCollections)) {
       if (cols.length === 1 && cols[0] === p) {
         // Leaf: show first 6 pages of the collection
@@ -243,7 +244,7 @@ export class BrowseMode {
 
     const data = await meiliSearch<{ hits: MeiliHit[]; estimatedTotalHits: number }>(this.cfg, this.cfg.mediaIndex, {
       q: '',
-      filter: `collection = "${name}"`,
+      filter: `collection = ${quoteFilter(name)}`,
       limit: PAGE_SIZE,
       offset: this.loadMoreOffset,
       attributesToRetrieve: ['id', 'url', 'thumb_url', 'title', 'page_number', 'date', 'collection'],
@@ -260,14 +261,14 @@ export class BrowseMode {
       const div = document.createElement('div');
       div.className = 'fav-browse-item';
       const thumbInner = hit.thumb_url
-        ? `<img src="${hit.thumb_url}" alt="" loading="lazy">`
+        ? `<img src="${urlAttribute(hit.thumb_url)}" alt="" loading="lazy">`
         : `<span class="fav-thumb-placeholder">📄</span>`;
       div.innerHTML =
-        `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}">` +
+        `<a class="fav-thumb" href="${urlAttribute(hit.url)}" data-id="${escapeHtml(hit.id)}">` +
         thumbInner +
         (hit.page_number != null
-          ? `<span class="fav-page-badge">${hit.page_number}</span>`
-          : hit.title ? `<span class="fav-page-badge fav-title-badge">${hit.title}</span>` : '') +
+          ? `<span class="fav-page-badge">${escapeHtml(hit.page_number)}</span>`
+          : hit.title ? `<span class="fav-page-badge fav-title-badge">${escapeHtml(hit.title)}</span>` : '') +
         `</a>`;
       this.gridEl.appendChild(div);
     });
@@ -298,7 +299,7 @@ export class BrowseMode {
 
       const data = await meiliSearch<{ hits: MeiliHit[] }>(this.cfg, this.cfg.mediaIndex, {
         q: '',
-        filter: `collection = "${collection}"`,
+        filter: `collection = ${quoteFilter(collection)}`,
         limit: 5000,
         attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
       });

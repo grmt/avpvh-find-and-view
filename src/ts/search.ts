@@ -6,7 +6,8 @@ import { Lightbox, type LightboxItem } from './lightbox';
 import { BrowseMode } from './browse';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
-import { showSearchError, hideSearchError } from './meili';
+import { showSearchError, hideSearchError, searchIndex, proxyHttpClient } from './meili';
+import { escapeHtml, highlightHtml, safeUrl, urlAttribute, quoteFilter } from './escape';
 
 function parseContains(q: string): string {
   return q
@@ -21,7 +22,7 @@ function parseContains(q: string): string {
           const neg = /^NOT\s+/i.test(ap);
           const term = ap.replace(/^NOT\s+/i, '').replace(/"/g, '').trim();
           if (!term) return null;
-          return (neg ? 'NOT ' : '') + `text CONTAINS "${term}"`;
+          return (neg ? 'NOT ' : '') + `text CONTAINS ${quoteFilter(term)}`;
         })
         .filter(Boolean)
         .join(' AND '),
@@ -39,26 +40,27 @@ function buildFilter(collectionFilter: string | null, substringMode: boolean, qu
 }
 
 function hitToHtml(hit: MeiliHit, withLink: boolean): string {
-  const snip = hit._snippetResult?.text?.value ?? hit.text.substring(0, 200) + '…';
-  const title = hit.page_number != null
+  const snip = hit._snippetResult?.text?.value != null
+    ? highlightHtml(hit._snippetResult.text.value) : escapeHtml((hit.text ?? '').substring(0, 200) + '…');
+  const title = escapeHtml(hit.page_number != null
     ? `${hit.title || hit.collection} — pagina ${hit.page_number}`
-    : (hit.title || hit.collection || hit.id);
+    : (hit.title || hit.collection || hit.id));
 
   if (!withLink) {
     // Media hit: always clickable into the lightbox, even without a thumbnail
     // image (e.g. PDF pages that only have extracted text, no page image).
     const thumbInner = hit.thumb_url
-      ? `<img src="${hit.thumb_url}" alt="" loading="lazy">`
+      ? `<img src="${urlAttribute(hit.thumb_url)}" alt="" loading="lazy">`
       : `<span class="fav-thumb-placeholder">📄</span>`;
-    return `<a class="fav-thumb" href="${hit.url}" data-id="${hit.id}" data-collection="${hit.collection}">
+    return `<a class="fav-thumb" href="${urlAttribute(hit.url)}" data-id="${escapeHtml(hit.id)}" data-collection="${escapeHtml(hit.collection)}">
       ${thumbInner}</a>
       <div class="fav-body"><h3>${title}</h3><p>${snip}</p></div>`;
   }
   const img = hit.thumb_url
-    ? `<a class="fav-thumb" href="${hit.url}"><img src="${hit.thumb_url}" alt="" loading="lazy"></a>`
+    ? `<a class="fav-thumb" href="${urlAttribute(hit.url)}"><img src="${urlAttribute(hit.thumb_url)}" alt="" loading="lazy"></a>`
     : '';
   return `${img}<div class="fav-body">
-    <h3><a href="${hit.url}">${title}</a></h3><p>${snip}</p></div>`;
+    <h3><a href="${urlAttribute(hit.url)}">${title}</a></h3><p>${snip}</p></div>`;
 }
 
 interface PgNode { url: string; title: string; children: Record<string, PgNode> }
@@ -76,6 +78,8 @@ function initInstance(cfg: FavConfig): void {
 
   const { searchClient: baseClient } = instantMeiliSearch(cfg.meiliUrl, cfg.meiliKey, {
     placeholderSearch: false,
+    meiliSearchParams: { highlightPreTag: '<em>', highlightPostTag: '</em>' },
+    ...(cfg.searchProxy ? { httpClient: proxyHttpClient(cfg) } : {}),
   });
 
   // search() also takes a single composition request since 0.2x; InstantSearch
@@ -104,7 +108,7 @@ function initInstance(cfg: FavConfig): void {
     },
   };
 
-  const search = instantsearch({ indexName: cfg.mediaIndex, searchClient: client as Parameters<typeof instantsearch>[0]['searchClient'] });
+  const search = instantsearch({ indexName: cfg.showMedia ? cfg.mediaIndex : cfg.contentIndex, searchClient: client as Parameters<typeof instantsearch>[0]['searchClient'] });
 
   const widgets: any[] = [
     searchBox({ container: `#${cfg.uid}-searchbox`, placeholder: cfg.placeholder, showReset: true, showSubmit: false }),
@@ -113,7 +117,8 @@ function initInstance(cfg: FavConfig): void {
 
   if (cfg.showMedia) {
     widgets.push(
-      hits({ container: `#${cfg.uid}-hits-media`, templates: { item: (hit: MeiliHit) => hitToHtml(hit, false), empty: () => '' } }),
+      // hitToHtml owns escaping; avoid escaping snippets twice in InstantSearch.
+      hits({ container: `#${cfg.uid}-hits-media`, escapeHTML: false, templates: { item: (hit: MeiliHit) => hitToHtml(hit, false), empty: () => '' } }),
       pagination({ container: `#${cfg.uid}-pag-media` }),
     );
   }
@@ -121,7 +126,7 @@ function initInstance(cfg: FavConfig): void {
   if (cfg.showContent) {
     widgets.push(
       index({ indexName: cfg.contentIndex }).addWidgets([
-        hits({ container: `#${cfg.uid}-hits-content`, templates: { item: (hit: MeiliHit) => hitToHtml(hit, true), empty: () => '' } }),
+        hits({ container: `#${cfg.uid}-hits-content`, escapeHTML: false, templates: { item: (hit: MeiliHit) => hitToHtml(hit, true), empty: () => '' } }),
         configure({ hitsPerPage: cfg.perPage, attributesToSnippet: [`text:${cfg.snippetLen}`], snippetEllipsisText: '…' }),
         pagination({ container: `#${cfg.uid}-pag-content` }),
       ]),
@@ -344,8 +349,8 @@ function initInstance(cfg: FavConfig): void {
       const label = nd?.title ?? path[i];
       html += '<span class="fav-bc-sep">›</span>';
       html += i === path.length - 1
-        ? `<span class="fav-bc-current">${label}</span>`
-        : `<a class="fav-bc-link" href="#" data-path="${path.slice(0, i + 1).join('/')}">${label}</a>`;
+        ? `<span class="fav-bc-current">${escapeHtml(label)}</span>`
+        : `<a class="fav-bc-link" href="#" data-path="${escapeHtml(path.slice(0, i + 1).join('/'))}">${escapeHtml(label)}</a>`;
     }
     pageBrowseCrumb.innerHTML = html;
     pageBrowseCrumb.querySelectorAll<HTMLAnchorElement>('.fav-bc-link').forEach(link => {
@@ -397,7 +402,7 @@ function initInstance(cfg: FavConfig): void {
     const items = shown.map((child, i) => {
       const isTruncated = hasTruncated && i === 6;
       const label = isTruncated ? child.title.slice(0, 5) + '…' : child.title;
-      return `<div class="fav-dir-sublist-item${isTruncated ? ' fav-dir-sublist-more' : ''}">${label}</div>`;
+      return `<div class="fav-dir-sublist-item${isTruncated ? ' fav-dir-sublist-more' : ''}">${escapeHtml(label)}</div>`;
     }).join('');
     return `<div class="fav-dir-sublist">${items}</div>`;
   }
@@ -425,11 +430,11 @@ function initInstance(cfg: FavConfig): void {
       const hasChildren = children.length > 0;
       const card = document.createElement(hasChildren ? 'div' : 'a') as HTMLElement;
       card.className = 'fav-col-card';
-      if (!hasChildren) (card as HTMLAnchorElement).href = effective.url;
+      if (!hasChildren) (card as HTMLAnchorElement).href = safeUrl(effective.url);
       const thumbHtml = hasChildren ? renderDirSublist(children) : '<span class="fav-col-icon">📄</span>';
       card.innerHTML =
         `<div class="fav-col-thumb${hasChildren ? ' fav-col-no-thumb' : ''}">${thumbHtml}</div>` +
-        `<div class="fav-col-label">${effective.title}</div>`;
+        `<div class="fav-col-label">${escapeHtml(effective.title)}</div>`;
       if (hasChildren) card.addEventListener('click', () => renderPageBrowseLevel([...path, slug, ...extraSlugs]));
       pageBrowseGrid.appendChild(card);
     }
@@ -437,12 +442,7 @@ function initInstance(cfg: FavConfig): void {
 
   // Page & post tree filter (content index): pages by URL path, posts by Jaar/Maand
   if (pgTreeUl) {
-    fetch(`${cfg.meiliUrl}/indexes/${cfg.contentIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: '', limit: 1000, attributesToRetrieve: ['id', 'title', 'url', 'type', 'date'] }),
-    })
-      .then(r => r.json())
+    searchIndex<{ hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }>(cfg, cfg.contentIndex, { q: '', limit: 1000, attributesToRetrieve: ['id', 'title', 'url', 'type', 'date'] })
       .then((data: { hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }) => {
         const docs = (data.hits ?? []).filter(d => d.url);
         const firstDoc = docs[0];
@@ -453,7 +453,7 @@ function initInstance(cfg: FavConfig): void {
         const pageDocs = docs.filter(d => d.type !== 'post');
         const postDocs = docs.filter(d => d.type === 'post');
 
-        const pgTree: Record<string, PgNode> = {};
+        const pgTree: Record<string, PgNode> = Object.create(null);
 
         const slugTitle = (slug: string): string =>
           slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -480,7 +480,7 @@ function initInstance(cfg: FavConfig): void {
             let child = node[slug];
             if (!child) {
               const partUrl = `${baseUrl}/${segs.slice(0, i + 1).join('/')}/`;
-              child = node[slug] = { url: partUrl, title: urlToTitle.get(partUrl) ?? slugTitle(slug), children: {} };
+              child = node[slug] = { url: partUrl, title: urlToTitle.get(partUrl) ?? slugTitle(slug), children: Object.create(null) };
             }
             node = child.children;
           });
@@ -497,13 +497,13 @@ function initInstance(cfg: FavConfig): void {
 
         // Post tree: Jaar > Maand > Bericht, newest first
         const monthNames = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
-        const postTree: Record<string, PgNode> = {};
+        const postTree: Record<string, PgNode> = Object.create(null);
         for (const doc of postDocs) {
           const d = doc.date;
           if (!d) continue;
           const year = d.slice(0, 4);
           const month = d.slice(5, 7);
-          if (!postTree[year]) postTree[year] = { url: '', title: year, children: {} };
+          if (!postTree[year]) postTree[year] = { url: '', title: year, children: Object.create(null) };
           const yearNode = postTree[year];
           if (!yearNode.children[month]) {
             const label = monthNames[parseInt(month, 10) - 1] ?? month;
@@ -599,7 +599,7 @@ function initInstance(cfg: FavConfig): void {
     pageFilter = allChecked
       ? null
       : checked.length
-        ? checked.map(u => `url = "${u}"`).join(' OR ')
+        ? checked.map(u => `url = ${quoteFilter(u)}`).join(' OR ')
         : 'url = "__avpvh_no_match__"';
     search.mainIndex.getHelper()?.search();
 
@@ -647,12 +647,7 @@ function initInstance(cfg: FavConfig): void {
 
   // Collection tree from facets
   if (colTreeUl) {
-    fetch(`${cfg.meiliUrl}/indexes/${cfg.mediaIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: '', limit: 0, facets: ['collection'] }),
-    })
-      .then(r => r.json())
+    searchIndex<{ facetDistribution?: Record<string, Record<string, number>> }>(cfg, cfg.mediaIndex, { q: '', limit: 0, facets: ['collection'] })
       .then((data: { facetDistribution?: Record<string, Record<string, number>> }) => {
         const cols = data.facetDistribution?.['collection'];
         if (!cols) return;
@@ -664,12 +659,12 @@ function initInstance(cfg: FavConfig): void {
 
   function buildColTree(cols: Record<string, number>): HTMLUListElement {
     // Build nested tree structure from flat paths
-    const tree: Record<string, any> = {};
+    const tree: Record<string, any> = Object.create(null);
     for (const [path, count] of Object.entries(cols)) {
       const parts = path.split('/');
       let node = tree;
       parts.forEach((part, i) => {
-        const child = (node[part] ??= { _path: parts.slice(0, i + 1).join('/'), _count: 0, _children: {} });
+        const child = (node[part] ??= { _path: parts.slice(0, i + 1).join('/'), _count: 0, _children: Object.create(null) });
         if (i === parts.length - 1) child._count = count;
         node = child._children;
       });
@@ -747,7 +742,7 @@ function initInstance(cfg: FavConfig): void {
     collectionFilter = allChecked
       ? null
       : checked.length
-        ? checked.map(p => `collection = "${p}"`).join(' OR ')
+        ? checked.map(p => `collection = ${quoteFilter(p)}`).join(' OR ')
         : 'collection = "__avpvh_no_match__"';
     search.mainIndex.getHelper()?.search();
 
@@ -789,17 +784,13 @@ function initInstance(cfg: FavConfig): void {
       const q = sbEl?.value.trim() ?? '';
 
       const fetchHits = (query: string, highlight: boolean): Promise<{ hits?: MeiliHit[] }> =>
-        fetch(`${cfg.meiliUrl}/indexes/${cfg.mediaIndex}/search`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        searchIndex(cfg, cfg.mediaIndex, {
             q: query,
-            filter: `collection = "${collection}"`,
+            filter: `collection = ${quoteFilter(collection)}`,
             limit: 5000,
             attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
             ...(highlight ? { attributesToHighlight: ['text'], highlightPreTag: '<em>', highlightPostTag: '</em>' } : {}),
-          }),
-        }).then(r => r.json());
+        });
 
       // Fetch every page of the document (so the lightbox can browse page by
       // page, not just through matches) plus a separate query for the actual
@@ -818,7 +809,7 @@ function initInstance(cfg: FavConfig): void {
             const highlighted = matchHit?._formatted?.text ?? h.text;
             const isMd = h.text_format === 'md' || looksLikeMarkdown(h.text);
             const mdHtml = renderMarkdown(highlighted);
-            const plainHtml = renderPlain(highlighted);
+            const plainHtml = renderPlain(highlighted, true);
             const html = isMd ? mdHtml : plainHtml;
             const htmlAlt = highlighted ? (isMd ? plainHtml : mdHtml) : undefined;
             const caption = (h.collection ?? '') + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));

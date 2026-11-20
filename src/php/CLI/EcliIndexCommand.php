@@ -14,7 +14,7 @@ final class EcliIndexCommand {
 
 	public static function run( array $args, array $assoc ): void {
 		$s      = Settings::get();
-		$client = new MeilisearchClient( $s['meili_url'], Settings::admin_key() );
+		$client = new MeilisearchClient( Settings::server_url(), Settings::admin_key() );
 		$indexer = new EcliIndexer( $client, Settings::media_index(), Settings::ecli_index() );
 
 		$count = $indexer->rebuild();

@@ -76,10 +76,9 @@ trap 'composer install' EXIT
 # 7. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/,
 # vendor/ mirrored with --delete so a dependency dropped from composer.json
 # actually disappears server-side too, not just stops being referenced.
-# Don't carry the local owner, group and mode over: WordPress (php-fpm, 82 with
-# groups 2000 and 9182) must be able to write the plugin folder, and the
-# server's setgid folders hand new files the right group.
-rsync_opts=(-rltv --omit-dir-times --no-owner --no-group --no-perms --chmod=D775,F664)
+# Plugin source is writable only by its deployment owner. The server must
+# keep that owner distinct from php-fpm; uploads/scans remain writable.
+rsync_opts=(-rltpv --omit-dir-times --no-owner --no-group --chmod=D755,F644)
 for site in "${sites[@]}"; do
 	dest="${DEPLOY_HOST}:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
 

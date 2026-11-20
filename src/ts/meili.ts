@@ -1,4 +1,40 @@
-import type { FavConfig } from './types';
+import type { FavConfig, SearchConfig } from './types';
+
+export async function proxySearch(cfg: SearchConfig, queries: object[]): Promise<{ results: unknown[] }> {
+  const proxy = cfg.searchProxy;
+  if (!proxy) throw new Error('Missing search proxy');
+  const res = await fetch(proxy.url, {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': proxy.nonce },
+    body: JSON.stringify({ queries, indexes: proxy.indexes, group: proxy.group, scopeNonce: proxy.scopeNonce }),
+  });
+  if (!res.ok) throw new Error(`Search HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function searchIndex<T>(cfg: SearchConfig, index: string, body: object): Promise<T> {
+  if (cfg.searchProxy) {
+    const data = await proxySearch(cfg, [{ ...body, indexUid: index }]);
+    return data.results[0] as T;
+  }
+  const res = await fetch(`${cfg.meiliUrl}/indexes/${encodeURIComponent(index)}/search`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Meilisearch HTTP ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+/** The SDK expects parsed JSON from a custom httpClient. */
+export function proxyHttpClient(cfg: SearchConfig): (...args: Parameters<typeof fetch>) => Promise<unknown> {
+  return async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.pathname !== '/multi-search') throw new Error('Unsupported search operation');
+    const body = JSON.parse(String(init?.body ?? '{}')) as { queries: object[] };
+    return proxySearch(cfg, body.queries);
+  };
+}
 
 /**
  * Shared "search is down" banner + a guarded fetch wrapper for the raw
@@ -34,13 +70,7 @@ export function hideSearchError(cfg: FavConfig): void {
 
 export async function meiliSearch<T>(cfg: FavConfig, index: string, body: object): Promise<T | null> {
   try {
-    const res = await fetch(`${cfg.meiliUrl}/indexes/${index}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`Meilisearch HTTP ${res.status}`);
-    const data = (await res.json()) as T;
+    const data = await searchIndex<T>(cfg, index, body);
     hideSearchError(cfg);
     return data;
   } catch (err) {
