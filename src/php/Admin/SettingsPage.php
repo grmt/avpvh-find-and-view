@@ -47,14 +47,16 @@ final class SettingsPage {
 		$s = Settings::get();
 		if ( isset( $input['meili_url'] ) )    $s['meili_url']    = esc_url_raw( $input['meili_url'] );
 		if ( isset( $input['meili_key'] ) )       $s['meili_key']       = sanitize_text_field( $input['meili_key'] );
-		if ( isset( $input['meili_admin_key'] ) ) $s['meili_admin_key'] = sanitize_text_field( $input['meili_admin_key'] );
+		if ( ! empty( $input['meili_admin_key'] ) ) $s['meili_admin_key'] = sanitize_text_field( $input['meili_admin_key'] );
 		if ( isset( $input['index_prefix'] ) )   $s['index_prefix']   = sanitize_key( $input['index_prefix'] );
-		if ( isset( $input['content_index'] ) )  $s['content_index']  = sanitize_text_field( $input['content_index'] );
+		if ( isset( $input['content_index'] ) && ( $input['content_index'] === '' || preg_match( '/^[A-Za-z0-9_-]+$/D', $input['content_index'] ) === 1 ) ) $s['content_index'] = $input['content_index'];
 		if ( isset( $input['post_types'] ) )   $s['post_types']   = array_map( 'sanitize_key', (array) $input['post_types'] );
 		if ( isset( $input['storage'] ) )      $s['storage']      = array_map( 'sanitize_key', (array) $input['storage'] );
 		// An unchecked checkbox is absent from the form, so only change it on a
 		// full form submit (meili_url is always present there).
 		if ( isset( $input['meili_url'] ) )    $s['require_login'] = ! empty( $input['require_login'] );
+		if ( isset( $input['search_group'] ) && is_string( $input['search_group'] ) && preg_match( '/^[a-z0-9_-]*$/D', $input['search_group'] ) === 1 ) $s['search_group'] = $input['search_group'];
+		if ( isset( $input['meili_url'] ) ) $s['include_protected_content'] = ! empty( $input['include_protected_content'] );
 		return $s;
 	}
 
@@ -70,7 +72,9 @@ final class SettingsPage {
 					<tr>
 						<th><?php esc_html_e( 'Meilisearch URL', 'avpvh-find-and-view' ); ?></th>
 						<td><input type="url" name="fav_settings[meili_url]"
-							value="<?php echo esc_attr( $s['meili_url'] ); ?>" class="regular-text"></td>
+							value="<?php echo esc_attr( $s['meili_url'] ); ?>" class="regular-text">
+							<p class="description"><?php esc_html_e( 'URL voor publieke zoekpagina\'s. De serververbinding gebruikt AVPVH_FAV_MEILI_SERVER_URL (standaard http://meilisearch:7700).', 'avpvh-find-and-view' ); ?></p>
+						</td>
 					</tr>
 					<tr>
 						<th><?php esc_html_e( 'Meilisearch search key', 'avpvh-find-and-view' ); ?></th>
@@ -82,8 +86,8 @@ final class SettingsPage {
 					<tr>
 						<th><?php esc_html_e( 'Meilisearch admin key', 'avpvh-find-and-view' ); ?></th>
 						<td><input type="password" name="fav_settings[meili_admin_key]"
-							value="<?php echo esc_attr( $s['meili_admin_key'] ?? '' ); ?>" class="regular-text">
-							<p class="description"><?php esc_html_e( 'Master/admin key voor herindexeren. Alleen zichtbaar voor beheerders.', 'avpvh-find-and-view' ); ?></p>
+							value="" autocomplete="new-password" class="regular-text">
+							<p class="description"><?php esc_html_e( 'Sitegebonden admin key voor herindexeren. Leeg laten behoudt de huidige sleutel. Docker secret meilisearch_admin_key heeft voorrang.', 'avpvh-find-and-view' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -128,10 +132,18 @@ final class SettingsPage {
 						<td>
 							<label>
 								<input type="checkbox" name="fav_settings[require_login]" value="1"
-									<?php checked( ! empty( $s['require_login'] ) ); ?>>
+									<?php checked( Settings::private_search() ); ?>>
 								<?php esc_html_e( 'Alleen voor ingelogde gebruikers', 'avpvh-find-and-view' ); ?>
 							</label>
 							<p class="description"><?php esc_html_e( 'Toont het zoeken en de ECLI-index alleen aan ingelogde gebruikers. Anonieme bezoekers krijgen een link naar de loginpagina en de Meilisearch-key komt niet in de pagina.', 'avpvh-find-and-view' ); ?></p>
+							<p><label><?php esc_html_e( 'Verplichte zoekgroep (optioneel)', 'avpvh-find-and-view' ); ?>
+								<input type="text" name="fav_settings[search_group]" value="<?php echo esc_attr( $s['search_group'] ); ?>" class="regular-text" placeholder="boek">
+							</label></p>
+							<p class="description"><?php esc_html_e( 'Een zoekgroep verplicht inloggen en actief groepslidmaatschap bij elke zoekaanvraag.', 'avpvh-find-and-view' ); ?></p>
+							<p><label><input type="checkbox" name="fav_settings[include_protected_content]" value="1" <?php checked( ! empty( $s['include_protected_content'] ) ); ?>>
+								<?php esc_html_e( 'Gepubliceerde ledeninhoud met wachtwoordmarkering ook doorzoekbaar maken', 'avpvh-find-and-view' ); ?>
+							</label></p>
+							<p class="description"><?php esc_html_e( 'Alleen werkzaam met een verplichte zoekgroep. De inhoud is dan beschikbaar voor bevoegde zoekers, inclusief gekoppelde PDF-bestanden.', 'avpvh-find-and-view' ); ?></p>
 						</td>
 					</tr>
 					<tr>

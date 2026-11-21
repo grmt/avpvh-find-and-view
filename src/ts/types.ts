@@ -16,7 +16,13 @@ export interface MeiliHit {
   _formatted?: { text?: string };
 }
 
-export interface FavConfig {
+export interface SearchConfig {
+  meiliUrl: string;
+  meiliKey: string;
+  searchProxy?: { url: string; nonce: string; indexes: string[]; group: string; scopeNonce: string } | null;
+}
+
+export interface FavConfig extends SearchConfig {
   uid: string;
   meiliUrl: string;
   meiliKey: string;

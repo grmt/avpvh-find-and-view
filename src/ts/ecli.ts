@@ -1,4 +1,7 @@
 import '../css/ecli.css';
+import { escapeHtml, safeUrl } from './escape';
+import { searchIndex } from './meili';
+import type { SearchConfig } from './types';
 
 interface EcliReference {
   collection: string;
@@ -15,7 +18,7 @@ interface EcliDoc {
   references: EcliReference[];
 }
 
-interface EcliConfig {
+interface EcliConfig extends SearchConfig {
   uid: string;
   meiliUrl: string;
   meiliKey: string;
@@ -31,12 +34,6 @@ declare global {
   }
 }
 
-function escapeHtml(s: string): string {
-  const div = document.createElement('div');
-  div.textContent = s;
-  return div.innerHTML;
-}
-
 function refLabel(r: EcliReference): string {
   const name = r.title || r.collection || r.url;
   return r.page_number != null ? `${name} — pagina ${r.page_number}` : name;
@@ -46,8 +43,10 @@ function refLabel(r: EcliReference): string {
 // page-number deep-linking only applies to the locally-hosted PDF, since we
 // can't guarantee the external source paginates identically.
 function refHref(r: EcliReference): string {
-  if (r.source_url) return r.source_url;
-  return r.page_number != null ? `${r.url}#page=${r.page_number}` : r.url;
+  const source = safeUrl(r.source_url);
+  if (source) return source;
+  const url = safeUrl(r.url);
+  return url && r.page_number != null ? `${url}#page=${Number(r.page_number)}` : url;
 }
 
 function renderResults(el: HTMLElement, docs: EcliDoc[]): void {
@@ -59,7 +58,7 @@ function renderResults(el: HTMLElement, docs: EcliDoc[]): void {
     <div class="fav-ecli-card">
       <div class="fav-ecli-card-header">
         <a class="fav-ecli-id" href="https://uitspraken.rechtspraak.nl/details?id=${encodeURIComponent(d.ecli)}" target="_blank" rel="noopener noreferrer">${escapeHtml(d.ecli)}</a>
-        <span class="fav-ecli-count">${d.citation_count} ${d.citation_count === 1 ? 'verwijzing' : 'verwijzingen'}</span>
+        <span class="fav-ecli-count">${escapeHtml(d.citation_count)} ${d.citation_count === 1 ? 'verwijzing' : 'verwijzingen'}</span>
       </div>
       <ul class="fav-ecli-refs">
         ${d.references.map(r => `<li><a href="${escapeHtml(refHref(r))}" target="_blank" rel="noopener noreferrer">${escapeHtml(refLabel(r))}</a></li>`).join('')}
@@ -84,16 +83,11 @@ function initInstance(cfg: EcliConfig): void {
 
   const search = (query: string): void => {
     const isFullEcli = fullEcliPattern.test(query);
-    fetch(`${cfg.meiliUrl}/indexes/${cfg.ecliIndex}/search`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${cfg.meiliKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(
+    searchIndex<{ hits?: EcliDoc[] }>(cfg, cfg.ecliIndex,
         isFullEcli
           ? { q: '', filter: `ecli = "${query.toUpperCase()}"`, limit: 1 }
           : { q: query, limit: 50, ...(query ? {} : { sort: ['citation_count:desc'] }) },
-      ),
-    })
-      .then(r => r.json())
+    )
       .then((data: { hits?: EcliDoc[] }) => renderResults(resultsEl, data.hits ?? []))
       .catch(() => { resultsEl.innerHTML = '<p class="fav-ecli-empty">Kon niet zoeken.</p>'; });
     if (hintEl) hintEl.style.display = query ? 'none' : '';

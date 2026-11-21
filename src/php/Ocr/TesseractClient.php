@@ -19,18 +19,23 @@ final class TesseractClient {
 
 	public static function ocr_image( string $image_bytes ): string|\WP_Error {
 		$resp = wp_remote_post( self::URL, [
-			'body'    => $image_bytes,
-			'headers' => [ 'Content-Type' => 'application/octet-stream' ],
-			'timeout' => 60,
+			'body'        => $image_bytes,
+			'headers'     => [ 'Content-Type' => 'application/octet-stream' ],
+			'redirection' => 0,
+			'timeout'     => 60,
 		] );
-		if ( is_wp_error( $resp ) ) return $resp;
+		if ( is_wp_error( $resp ) ) {
+			error_log( '[avpvh-fav] Tesseract request error: ' . $resp->get_error_message() );
+			return new \WP_Error( 'tesseract_error', 'Tesseract-service niet bereikbaar.', [ 'status' => 502 ] );
+		}
 
 		$code = wp_remote_retrieve_response_code( $resp );
 		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
 		if ( $code !== 200 ) {
-			$message = $body['error'] ?? "Tesseract-service fout (HTTP {$code})";
-			return new \WP_Error( 'tesseract_error', $message, [ 'status' => 502 ] );
+			$detail = is_array( $body ) ? (string) ( $body['error'] ?? '' ) : '';
+			error_log( sprintf( '[avpvh-fav] Tesseract HTTP %d: %s', $code, $detail ) );
+			return new \WP_Error( 'tesseract_error', 'Tesseract-verwerking mislukt.', [ 'status' => 502 ] );
 		}
-		return (string) ( $body['text'] ?? '' );
+		return (string) ( is_array( $body ) ? ( $body['text'] ?? '' ) : '' );
 	}
 }

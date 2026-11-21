@@ -11,6 +11,15 @@ use Avpvh\FindAndView\Settings;
 use Meilisearch\Contracts\DocumentsQuery;
 
 final class TreeController {
+	private const MAX_SCAN_TEXT_BYTES     = 524288;   // 512 KiB per page
+	private const MAX_REPLACE_QUERY_BYTES = 500;
+	private const MAX_REPLACE_VALUE_BYTES = 10000;
+	private const MAX_OCR_IMAGE_BYTES     = 26214400; // 25 MiB
+	private const REGEX_BACKTRACK_LIMIT   = '10000';
+	private const RATE_LIMIT_WINDOW       = 600;      // 10 minutes
+	private const RATE_LIMIT_DOCAI        = 30;
+	private const RATE_LIMIT_TESSERACT    = 60;
+	private const RATE_LIMIT_DELETE       = 30;
 
 	public function register(): void {
 		add_action( 'rest_api_init', [ $this, 'register_routes' ] );
@@ -27,8 +36,8 @@ final class TreeController {
 			'callback'            => [ $this, 'move_node' ],
 			'permission_callback' => fn() => current_user_can( 'manage_options' ),
 			'args'                => [
-				'from' => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
-				'to'   => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'from' => [ 'required' => true, 'type' => 'string' ],
+				'to'   => [ 'required' => true, 'type' => 'string' ],
 			],
 		] );
 		register_rest_route( 'avpvh-fav/v1', '/tree/normalize', [
@@ -94,6 +103,7 @@ final class TreeController {
 			'args'                => [
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
+				'engine'      => [ 'type' => 'string', 'default' => 'docai', 'enum' => [ 'docai', 'tesseract' ] ],
 			],
 		] );
 		register_rest_route( 'avpvh-fav/v1', '/scan/crop-ocr', [
@@ -123,7 +133,7 @@ final class TreeController {
 			'args'                => [
 				'collection'  => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
 				'page_number' => [ 'required' => true, 'type' => 'integer' ],
-				'version'     => [ 'required' => true, 'type' => 'integer' ],
+				'version'     => [ 'required' => true, 'type' => 'integer', 'minimum' => 1, 'maximum' => 3 ],
 			],
 		] );
 		register_rest_route( 'avpvh-fav/v1', '/scan/delete', [
@@ -161,7 +171,7 @@ final class TreeController {
 			'callback'            => [ $this, 'make_dir' ],
 			'permission_callback' => fn() => current_user_can( 'manage_options' ),
 			'args'                => [
-				'path' => [ 'required' => true, 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field' ],
+				'path' => [ 'required' => true, 'type' => 'string' ],
 			],
 		] );
 	}
@@ -187,13 +197,98 @@ final class TreeController {
 		return $dirs['baseurl'] . $rel;
 	}
 
+	private function resolve_collection_dir( string $collection ): string|false {
+		if ( $collection === '' ) return false;
+		$root = realpath( $this->scan_root() );
+		$dir  = $this->safe_path( $collection );
+		if ( ! $root || ! $dir || $dir === $root || ! is_dir( $dir ) ) return false;
+		return $dir;
+	}
+
+	private static function escape_regex_delimiter( string $pattern ): string {
+		return preg_replace( '/(?<!\\\\)((?:\\\\\\\\)*)\//', '$1\\/', $pattern ) ?? $pattern;
+	}
+
+	private static function check_rate_limit( string $bucket, int $max_requests, int $window_seconds = self::RATE_LIMIT_WINDOW ): ?\WP_Error {
+		$user_id = function_exists( 'get_current_user_id' ) ? get_current_user_id() : 0;
+		$key     = 'fav_rl_' . $bucket . '_' . $user_id;
+		$now     = time();
+		$state   = get_transient( $key );
+		if ( ! is_array( $state ) || ! isset( $state['count'], $state['reset'] ) || $now >= (int) $state['reset'] ) {
+			$state = [ 'count' => 0, 'reset' => $now + $window_seconds ];
+		}
+		if ( (int) $state['count'] >= $max_requests ) {
+			return new \WP_Error( 'rate_limited', 'Te veel verzoeken. Probeer het later opnieuw.', [ 'status' => 429 ] );
+		}
+		$state['count'] = (int) $state['count'] + 1;
+		set_transient( $key, $state, max( 1, (int) $state['reset'] - $now ) );
+		return null;
+	}
+
+	private static function audit_log( string $action, array $context = [] ): void {
+		$entry = [
+			'action'  => $action,
+			'user_id' => function_exists( 'get_current_user_id' ) ? get_current_user_id() : 0,
+			'time'    => gmdate( 'c' ),
+			'context' => $context,
+		];
+		if ( function_exists( 'do_action' ) ) {
+			do_action( 'avpvh_fav_audit', $action, $entry );
+		}
+		error_log( '[avpvh-fav-audit] ' . wp_json_encode( $entry ) );
+	}
+
+	private static function meili_error( string $log_context, string $detail, string $user_message, int $status = 500 ): \WP_Error {
+		error_log( '[avpvh-fav] ' . $log_context . ': ' . $detail );
+		return new \WP_Error( 'meili_error', $user_message, [ 'status' => $status ] );
+	}
+
 	private function safe_path( string $rel ): string|false {
+		if ( $rel !== '' && ! self::valid_relative_path( $rel ) ) return false;
 		$root = realpath( $this->scan_root() );
 		if ( ! $root ) return false;
 		$abs  = realpath( $root . '/' . $rel );
 		// The root itself, or something below it -- not a sibling like scans-old/.
 		if ( ! $abs || ( $abs !== $root && ! str_starts_with( $abs, $root . '/' ) ) ) return false;
 		return $abs;
+	}
+
+	private static function valid_relative_path( string $rel ): bool {
+		if ( $rel === '' || str_contains( $rel, "\0" ) || str_contains( $rel, '\\' ) ) return false;
+		foreach ( explode( '/', $rel ) as $segment ) {
+			if ( in_array( $segment, [ '', '.', '..' ], true ) ) return false;
+		}
+		return ! self::is_deleted_collection( $rel );
+	}
+
+	/** Validate non-existing destinations, including every existing ancestor. */
+	private function destination_path( string $rel ): string|false {
+		$root = realpath( $this->scan_root() );
+		if ( ! $root || ! self::valid_relative_path( $rel ) ) return false;
+		$path = $root;
+		foreach ( explode( '/', $rel ) as $segment ) {
+			$path .= '/' . $segment;
+			// Reject dangling links as well as links whose targets escape the root.
+			if ( is_link( $path ) ) return false;
+			if ( file_exists( $path ) ) {
+				$real = realpath( $path );
+				if ( ! $real || ! is_dir( $real ) || ! str_starts_with( $real, $root . '/' ) ) return false;
+			}
+		}
+		return $path;
+	}
+
+	private static function is_deleted_collection( string $rel ): bool {
+		return in_array( 'verwijderd', explode( '/', strtolower( $rel ) ), true );
+	}
+
+	/** Prune backups and links before descending, for every scans walker. */
+	private static function scan_iterator( string $root, int $mode = \RecursiveIteratorIterator::LEAVES_ONLY ): \RecursiveIteratorIterator {
+		$filter = new \RecursiveCallbackFilterIterator(
+			new \RecursiveDirectoryIterator( $root, \FilesystemIterator::SKIP_DOTS ),
+			static fn( \SplFileInfo $file ): bool => ! $file->isLink() && strtolower( $file->getFilename() ) !== 'verwijderd'
+		);
+		return new \RecursiveIteratorIterator( $filter, $mode );
 	}
 
 	/**
@@ -261,7 +356,7 @@ final class TreeController {
 		$is_leaf  = false;
 
 		foreach ( scandir( $dir ) as $entry ) {
-			if ( $entry[0] === '.' ) continue;
+			if ( $entry[0] === '.' || strtolower( $entry ) === 'verwijderd' || is_link( $dir . '/' . $entry ) ) continue;
 			$full = $dir . '/' . $entry;
 			if ( is_dir( $full ) ) {
 				$children[] = $this->build_tree( $full, $root );
@@ -285,16 +380,17 @@ final class TreeController {
 
 	public function move_node( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
 		$from_abs = $this->safe_path( $req['from'] );
-		$to_rel   = trim( $req['to'], '/' );
+		$to_rel   = (string) $req['to'];
 		$root     = realpath( $this->scan_root() );
 
-		if ( ! $from_abs || ! $root ) return new \WP_Error( 'invalid', 'Invalid path', [ 'status' => 400 ] );
+		if ( ! $from_abs || ! $root || $from_abs === $root || ! is_dir( $from_abs ) ) return new \WP_Error( 'invalid', 'Invalid folder', [ 'status' => 400 ] );
 
-		$to_abs = realpath( $root ) . '/' . $to_rel;
-		if ( ! str_starts_with( $to_abs, $root . '/' ) ) return new \WP_Error( 'invalid', 'Invalid destination', [ 'status' => 400 ] );
+		$to_abs = $this->destination_path( $to_rel );
+		if ( ! $to_abs || $to_abs === $from_abs || str_starts_with( $to_abs, $from_abs . '/' ) ) return new \WP_Error( 'invalid', 'Invalid destination', [ 'status' => 400 ] );
 		$to_dir = dirname( $to_abs );
 
-		if ( ! is_dir( $to_dir ) ) wp_mkdir_p( $to_dir );
+		if ( ! is_dir( $to_dir ) && ! wp_mkdir_p( $to_dir ) ) return new \WP_Error( 'mkdir', 'Create failed', [ 'status' => 500 ] );
+		if ( $this->destination_path( $to_rel ) === false ) return new \WP_Error( 'invalid', 'Invalid destination', [ 'status' => 400 ] );
 		if ( file_exists( $to_abs ) ) return new \WP_Error( 'exists', 'Destination exists', [ 'status' => 409 ] );
 
 		if ( ! $this->move_path( $from_abs, $to_abs, false ) ) return new \WP_Error( 'rename', 'Move failed', [ 'status' => 500 ] );
@@ -303,13 +399,8 @@ final class TreeController {
 	}
 
 	public function make_dir( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
-		$root    = realpath( $this->scan_root() );
-		$rel     = trim( $req['path'], '/' );
-		$abs     = $root . '/' . $rel;
-
-		if ( ! $root ) return new \WP_Error( 'invalid', 'Invalid root', [ 'status' => 400 ] );
-		// $abs does not exist yet, so realpath() can't resolve it: refuse any climbing.
-		if ( $rel === '' || in_array( '..', explode( '/', $rel ), true ) ) return new \WP_Error( 'invalid', 'Invalid path', [ 'status' => 400 ] );
+		$abs = $this->destination_path( (string) $req['path'] );
+		if ( ! $abs ) return new \WP_Error( 'invalid', 'Invalid path', [ 'status' => 400 ] );
 		if ( ! wp_mkdir_p( $abs ) ) return new \WP_Error( 'mkdir', 'Create failed', [ 'status' => 500 ] );
 
 		return new \WP_REST_Response( [ 'ok' => true ] );
@@ -331,9 +422,7 @@ final class TreeController {
 			$index->updateFilterableAttributes( [ 'collection', 'page_number', 'type', 'text', 'tags' ] );
 
 			$docs = [];
-			$it   = new \RecursiveIteratorIterator(
-				new \RecursiveDirectoryIterator( $root, \FilesystemIterator::SKIP_DOTS )
-			);
+			$it   = self::scan_iterator( $root );
 
 			foreach ( $it as $file ) {
 				if ( strtolower( $file->getExtension() ) === 'xlsx' ) {
@@ -393,7 +482,7 @@ final class TreeController {
 			return new \WP_REST_Response( [ 'indexed' => count( $docs ), 'pruned' => count( $stale_ids ) ] );
 
 		} catch ( \Exception $e ) {
-			return new \WP_Error( 'meili_error', $e->getMessage(), [ 'status' => 500 ] );
+			return self::meili_error( 'reindex_scans', $e->getMessage(), 'Herindexeren van scans mislukt.' );
 		}
 	}
 
@@ -408,8 +497,11 @@ final class TreeController {
 		$page_number = (int) $req->get_param( 'page_number' );
 		$text        = (string) $req->get_param( 'text' );
 
-		$dir = $this->safe_path( $collection );
-		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		if ( trim( $text ) === '' ) return new \WP_Error( 'empty', 'Tekst mag niet leeg zijn', [ 'status' => 400 ] );
+		if ( strlen( $text ) > self::MAX_SCAN_TEXT_BYTES ) return new \WP_Error( 'too_large', 'Tekst is te groot', [ 'status' => 413 ] );
+
+		$dir = $this->resolve_collection_dir( $collection );
+		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 
 		// The page's zero-padding width lives only on disk — never guessed,
 		// editing only ever touches a page that already exists there.
@@ -427,6 +519,8 @@ final class TreeController {
 		$doc = self::build_source_document( new \SplFileInfo( $file ), $this->scan_root(), $this->scan_base_url() );
 		if ( $doc === null ) return new \WP_Error( 'empty', 'Tekst mag niet leeg zijn', [ 'status' => 400 ] );
 
+		self::audit_log( 'scan_edit', [ 'collection' => $collection, 'page_number' => $page_number, 'bytes' => strlen( $text ) ] );
+
 		return new \WP_REST_Response( [ 'ok' => true, 'text' => $doc['text'], 'text_format' => $doc['text_format'] ] );
 	}
 
@@ -435,8 +529,8 @@ final class TreeController {
 		$collection  = (string) $req->get_param( 'collection' );
 		$page_number = (int) $req->get_param( 'page_number' );
 
-		$dir = $this->safe_path( $collection );
-		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$dir = $this->resolve_collection_dir( $collection );
+		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 		$file = $this->resolve_page_file( $dir, $page_number, 'txt|md' );
 		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
 
@@ -458,8 +552,10 @@ final class TreeController {
 		$page_number = (int) $req->get_param( 'page_number' );
 		$version     = (int) $req->get_param( 'version' );
 
-		$dir = $this->safe_path( $collection );
-		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		if ( $version < 1 || $version > 3 ) return new \WP_Error( 'bad_version', 'Ongeldige back-upversie', [ 'status' => 400 ] );
+
+		$dir = $this->resolve_collection_dir( $collection );
+		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 		$file = $this->resolve_page_file( $dir, $page_number, 'txt|md' );
 		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
 		$bak = "{$file}.bak{$version}";
@@ -479,11 +575,14 @@ final class TreeController {
 	 * renumbered Meilisearch upserts.
 	 */
 	public function delete_scan_page( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
+		$rate_err = self::check_rate_limit( 'delete', self::RATE_LIMIT_DELETE );
+		if ( $rate_err !== null ) return $rate_err;
+
 		$collection  = (string) $req->get_param( 'collection' );
 		$page_number = (int) $req->get_param( 'page_number' );
 
-		$dir = $this->safe_path( $collection );
-		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$dir = $this->resolve_collection_dir( $collection );
+		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 		$file = $this->resolve_page_file( $dir, $page_number, 'txt|md|png|jpe?g' );
 		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
 		$label = pathinfo( $file, PATHINFO_FILENAME );
@@ -520,14 +619,16 @@ final class TreeController {
 		$result = $this->reindex_scans();
 		if ( is_wp_error( $result ) ) return $result;
 
+		self::audit_log( 'scan_delete', [ 'collection' => $collection, 'page_number' => $page_number ] );
+
 		return new \WP_REST_Response( [ 'ok' => true ] );
 	}
 
 	/** Regenerates consolidated_extracted_text.txt from every page's current text. */
 	public function consolidate_scan_collection( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
 		$collection = (string) $req->get_param( 'collection' );
-		$dir = $this->safe_path( $collection );
-		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$dir = $this->resolve_collection_dir( $collection );
+		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 
 		$texts = [];
 		$labels = [];
@@ -543,13 +644,14 @@ final class TreeController {
 		if ( ! $texts ) return new \WP_Error( 'empty', 'Geen pagina\'s in deze collectie', [ 'status' => 400 ] );
 
 		file_put_contents( "{$dir}/consolidated_extracted_text.txt", implode( "\n\n--- PAGE SEPARATOR ---\n\n", $texts ) );
+		self::audit_log( 'scan_consolidate', [ 'collection' => $collection, 'pages' => count( $texts ) ] );
 		return new \WP_REST_Response( [ 'ok' => true, 'pages' => count( $texts ) ] );
 	}
 
 	/**
 	 * Finds/replaces across every page's text file in a collection, with the
-	 * same rotating backup as a normal edit, then re-indexes each changed
-	 * page individually (filenames/numbering never change here).
+	 * same rotating backup as a normal edit, then re-indexes all changed pages
+	 * in one Meilisearch batch.
 	 */
 	public function replace_scan_collection( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
 		$collection     = (string) $req->get_param( 'collection' );
@@ -560,32 +662,80 @@ final class TreeController {
 		$whole_word     = (bool) $req->get_param( 'whole_word' );
 
 		if ( $query === '' ) return new \WP_Error( 'no_query', 'Zoekterm is verplicht', [ 'status' => 400 ] );
+		if ( strlen( $query ) > self::MAX_REPLACE_QUERY_BYTES ) return new \WP_Error( 'query_too_long', 'Zoekterm is te lang', [ 'status' => 400 ] );
+		if ( strlen( $replacement ) > self::MAX_REPLACE_VALUE_BYTES ) return new \WP_Error( 'replacement_too_long', 'Vervangende tekst is te lang', [ 'status' => 400 ] );
 
-		$dir = $this->safe_path( $collection );
-		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$dir = $this->resolve_collection_dir( $collection );
+		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 
-		$pattern = $use_regex ? $query : preg_quote( $query, '/' );
+		$pattern = $use_regex ? self::escape_regex_delimiter( $query ) : preg_quote( $query, '/' );
 		if ( $whole_word ) $pattern = '\b(?:' . $pattern . ')\b';
 		$flags = $case_sensitive ? '' : 'i';
 		$regex = "/{$pattern}/u{$flags}";
-		if ( @preg_match( $regex, '' ) === false ) return new \WP_Error( 'bad_regex', 'Ongeldige regex', [ 'status' => 400 ] );
 
-		$total = 0;
+		$prev_limit = ini_set( 'pcre.backtrack_limit', self::REGEX_BACKTRACK_LIMIT );
+		$pending    = [];
+		$total      = 0;
+		try {
+			if ( @preg_match( $regex, '' ) === false ) {
+				return new \WP_Error( 'bad_regex', 'Ongeldige regex', [ 'status' => 400 ] );
+			}
+
+			foreach ( scandir( $dir ) as $entry ) {
+				if ( preg_match( '/^page_\d+\.(?:txt|md)$/i', $entry ) !== 1 ) continue;
+				$file = "{$dir}/{$entry}";
+				if ( is_link( $file ) ) continue;
+				$text     = (string) file_get_contents( $file );
+				$count    = 0;
+				$new_text = @preg_replace_callback( $regex, static fn(): string => $replacement, $text, -1, $count );
+				if ( $new_text === null || preg_last_error() !== PREG_NO_ERROR ) {
+					return new \WP_Error( 'regex_limit', 'Regex-verwerking afgebroken (patroon te complex)', [ 'status' => 400 ] );
+				}
+				if ( ! $count ) continue;
+				if ( trim( $new_text ) === '' ) {
+					return new \WP_Error( 'empty', 'Vervanging zou een lege pagina opleveren', [ 'status' => 400 ] );
+				}
+				if ( strlen( $new_text ) > self::MAX_SCAN_TEXT_BYTES ) {
+					return new \WP_Error( 'too_large', 'Vervanging levert een te grote pagina op', [ 'status' => 413 ] );
+				}
+				$pending[] = [ 'entry' => $entry, 'file' => $file, 'text' => $new_text, 'count' => $count ];
+				$total    += $count;
+			}
+		} finally {
+			if ( $prev_limit !== false ) ini_set( 'pcre.backtrack_limit', $prev_limit );
+		}
+
 		$pages_changed = [];
-		foreach ( scandir( $dir ) as $entry ) {
-			if ( preg_match( '/^page_\d+\.(?:txt|md)$/i', $entry ) !== 1 ) continue;
-			$file = "{$dir}/{$entry}";
-			$text = (string) file_get_contents( $file );
-			$new_text = preg_replace( $regex, str_replace( '$', '\$', $replacement ), $text, -1, $count );
-			if ( ! $count ) continue;
+		$docs          = [];
+		$root          = $this->scan_root();
+		$base_url      = $this->scan_base_url();
+		foreach ( $pending as $change ) {
+			$this->rotate_backups( $change['file'] );
+			file_put_contents( $change['file'], $change['text'] );
+			$doc = self::build_source_document( new \SplFileInfo( $change['file'] ), $root, $base_url );
+			if ( $doc !== null ) $docs[] = $doc;
+			$pages_changed[] = $change['entry'];
+		}
 
-			$this->rotate_backups( $file );
-			file_put_contents( $file, $new_text );
-			$err = $this->reindex_one_page( $file );
-			if ( is_wp_error( $err ) ) return $err;
+		if ( $docs ) {
+			$result = $this->meili_client_and_index();
+			if ( is_wp_error( $result ) ) return $result;
+			[ $client, $index ] = $result;
+			try {
+				$task = $index->addDocuments( $docs );
+				$client->waitForTask( $task['taskUid'], 60000 );
+			} catch ( \Exception $e ) {
+				return self::meili_error( 'replace_scan_collection', $e->getMessage(), 'Herindexeren na vervangen mislukt.' );
+			}
+		}
 
-			$total += $count;
-			$pages_changed[] = $entry;
+		if ( $pages_changed ) {
+			self::audit_log( 'scan_replace', [
+				'collection'         => $collection,
+				'pages_changed'      => count( $pages_changed ),
+				'total_replacements' => $total,
+				'regex'              => $use_regex,
+			] );
 		}
 
 		return new \WP_REST_Response( [ 'ok' => true, 'total_replacements' => $total, 'pages_changed' => $pages_changed ] );
@@ -600,19 +750,31 @@ final class TreeController {
 	public function ocr_scan_page( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
 		$collection  = (string) $req->get_param( 'collection' );
 		$page_number = (int) $req->get_param( 'page_number' );
-		$engine      = (string) $req->get_param( 'engine' );
+		$engine      = (string) ( $req->get_param( 'engine' ) ?: 'docai' );
+		if ( ! in_array( $engine, [ 'docai', 'tesseract' ], true ) ) {
+			return new \WP_Error( 'bad_engine', 'Ongeldige OCR-engine', [ 'status' => 400 ] );
+		}
 
-		$dir = $this->safe_path( $collection );
-		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$rate_err = self::check_rate_limit( 'ocr_' . $engine, $engine === 'tesseract' ? self::RATE_LIMIT_TESSERACT : self::RATE_LIMIT_DOCAI );
+		if ( $rate_err !== null ) return $rate_err;
+
+		$dir = $this->resolve_collection_dir( $collection );
+		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 
 		$image = $this->resolve_page_file( $dir, $page_number, 'png|jpe?g' );
 		if ( $image === null ) return new \WP_Error( 'no_image', 'Paginabeeld niet gevonden', [ 'status' => 404 ] );
+		$size = filesize( $image );
+		if ( $size === false || $size > self::MAX_OCR_IMAGE_BYTES ) {
+			return new \WP_Error( 'image_too_large', 'Paginabeeld is te groot voor OCR', [ 'status' => 413 ] );
+		}
 
 		$mime = strtolower( (string) pathinfo( $image, PATHINFO_EXTENSION ) ) === 'png' ? 'image/png' : 'image/jpeg';
 		$text = $engine === 'tesseract'
 			? TesseractClient::ocr_image( (string) file_get_contents( $image ) )
 			: DocumentAiClient::ocr_image( (string) file_get_contents( $image ), $mime );
 		if ( is_wp_error( $text ) ) return $text;
+
+		self::audit_log( 'scan_ocr', [ 'collection' => $collection, 'page_number' => $page_number, 'engine' => $engine ] );
 
 		return new \WP_REST_Response( [ 'text' => $text ] );
 	}
@@ -628,18 +790,30 @@ final class TreeController {
 		$collection  = (string) $req->get_param( 'collection' );
 		$page_number = (int) $req->get_param( 'page_number' );
 		$crop        = (array) $req->get_param( 'crop' );
-		$engine      = (string) $req->get_param( 'engine' );
+		$engine      = (string) ( $req->get_param( 'engine' ) ?: 'docai' );
+		if ( ! in_array( $engine, [ 'docai', 'tesseract' ], true ) ) {
+			return new \WP_Error( 'bad_engine', 'Ongeldige OCR-engine', [ 'status' => 400 ] );
+		}
 
-		$dir = $this->safe_path( $collection );
-		if ( ! $dir || ! is_dir( $dir ) ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
+		$rate_err = self::check_rate_limit( 'ocr_' . $engine, $engine === 'tesseract' ? self::RATE_LIMIT_TESSERACT : self::RATE_LIMIT_DOCAI );
+		if ( $rate_err !== null ) return $rate_err;
+
+		$dir = $this->resolve_collection_dir( $collection );
+		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 		$image_path = $this->resolve_page_file( $dir, $page_number, 'png|jpe?g' );
 		if ( $image_path === null ) return new \WP_Error( 'no_image', 'Paginabeeld niet gevonden', [ 'status' => 404 ] );
+		$size = filesize( $image_path );
+		if ( $size === false || $size > self::MAX_OCR_IMAGE_BYTES ) {
+			return new \WP_Error( 'image_too_large', 'Paginabeeld is te groot voor OCR', [ 'status' => 413 ] );
+		}
 
 		$x = (float) ( $crop['x'] ?? 0 );
 		$y = (float) ( $crop['y'] ?? 0 );
 		$w = (float) ( $crop['w'] ?? 0 );
 		$h = (float) ( $crop['h'] ?? 0 );
-		if ( $w <= 0 || $h <= 0 ) return new \WP_Error( 'bad_crop', 'Ongeldige selectie', [ 'status' => 400 ] );
+		if ( ! is_finite( $x ) || ! is_finite( $y ) || ! is_finite( $w ) || ! is_finite( $h ) || $w <= 0 || $h <= 0 ) {
+			return new \WP_Error( 'bad_crop', 'Ongeldige selectie', [ 'status' => 400 ] );
+		}
 
 		$src = @imagecreatefromstring( (string) file_get_contents( $image_path ) );
 		if ( ! $src ) return new \WP_Error( 'bad_image', 'Kon paginabeeld niet lezen', [ 'status' => 500 ] );
@@ -671,6 +845,8 @@ final class TreeController {
 			: DocumentAiClient::ocr_image_sorted( $png_bytes, 'image/png' );
 		if ( is_wp_error( $text ) ) return $text;
 
+		self::audit_log( 'scan_crop_ocr', [ 'collection' => $collection, 'page_number' => $page_number, 'engine' => $engine ] );
+
 		return new \WP_REST_Response( [
 			'text'         => $text,
 			'engine'       => $engine,
@@ -683,7 +859,7 @@ final class TreeController {
 			$count = IndexCommand::reindex_posts();
 			return new \WP_REST_Response( [ 'indexed' => $count ] );
 		} catch ( \Exception $e ) {
-			return new \WP_Error( 'meili_error', $e->getMessage(), [ 'status' => 500 ] );
+			return self::meili_error( 'reindex_content', $e->getMessage(), 'Herindexeren van pagina\'s mislukt.' );
 		}
 	}
 
@@ -692,24 +868,15 @@ final class TreeController {
 	}
 
 	public function index_stats(): \WP_REST_Response|\WP_Error {
-		$s         = Settings::get();
-		$meili_url = $s['meili_url'] ?? '';
-		$key_file  = '/run/secrets/meilisearch_master_key';
-		$key       = is_readable( $key_file ) ? trim( (string) file_get_contents( $key_file ) ) : (string) ( $s['meili_admin_key'] ?? '' );
+		$meili_url = Settings::server_url();
+		$key       = Settings::admin_key();
 		if ( ! $meili_url || ! $key ) return new \WP_Error( 'no_config', 'No config', [ 'status' => 400 ] );
 
-		$resp = wp_remote_get( "{$meili_url}/indexes?limit=50", [
-			'headers' => [ 'Authorization' => "Bearer {$key}" ],
-			'timeout' => 10,
-		] );
-		if ( is_wp_error( $resp ) ) return $resp;
-		$indexes = json_decode( wp_remote_retrieve_body( $resp ), true )['results'] ?? [];
-
 		$result = [];
-		foreach ( $indexes as $idx ) {
-			$uid   = $idx['uid'];
+		foreach ( Settings::indexes() as $uid ) {
 			$stats = wp_remote_get( "{$meili_url}/indexes/{$uid}/stats", [
 				'headers' => [ 'Authorization' => "Bearer {$key}" ],
+				'redirection' => 0,
 				'timeout' => 10,
 			] );
 			$s_body = is_wp_error( $stats ) ? [] : ( json_decode( wp_remote_retrieve_body( $stats ), true ) ?? [] );
@@ -717,20 +884,19 @@ final class TreeController {
 				'uid'        => $uid,
 				'docs'       => $s_body['numberOfDocuments'] ?? '?',
 				'indexing'   => $s_body['isIndexing'] ?? false,
-				'primaryKey' => $idx['primaryKey'] ?? null,
+				'primaryKey' => null,
 			];
 		}
 		return new \WP_REST_Response( $result );
 	}
 
 	public function apply_index_settings( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
-		$s         = Settings::get();
-		$meili_url = $s['meili_url'] ?? '';
-		$key_file  = '/run/secrets/meilisearch_master_key';
-		$key       = is_readable( $key_file ) ? trim( (string) file_get_contents( $key_file ) ) : (string) ( $s['meili_admin_key'] ?? '' );
+		$meili_url = Settings::server_url();
+		$key       = Settings::admin_key();
 		if ( ! $meili_url || ! $key ) return new \WP_Error( 'no_config', 'No Meilisearch config', [ 'status' => 400 ] );
 
-		$index      = sanitize_text_field( $req->get_param( 'index' ) ?? '' );
+		$index      = $req->get_param( 'index' );
+		if ( ! Settings::valid_index( $index ) ) return new \WP_Error( 'invalid_index', 'Invalid site index', [ 'status' => 400 ] );
 		$settings   = [];
 
 		$settings['typoTolerance'] = [
@@ -748,71 +914,70 @@ final class TreeController {
 		}
 
 		$resp = wp_remote_request( "{$meili_url}/indexes/{$index}/settings", [
+			'redirection' => 0,
 			'method'  => 'PATCH',
 			'headers' => [ 'Authorization' => "Bearer {$key}", 'Content-Type' => 'application/json' ],
 			'body'    => wp_json_encode( $settings ),
 			'timeout' => 15,
 		] );
-		if ( is_wp_error( $resp ) ) return $resp;
+		if ( is_wp_error( $resp ) ) return self::meili_error( 'apply_index_settings', $resp->get_error_message(), 'Meilisearch niet bereikbaar.', 502 );
 		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
 		return new \WP_REST_Response( $body );
 	}
 
 	public function doc_search( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
-		$s         = Settings::get();
-		$meili_url = $s['meili_url'] ?? '';
-		$key_file  = '/run/secrets/meilisearch_master_key';
-		$key       = is_readable( $key_file ) ? trim( (string) file_get_contents( $key_file ) ) : (string) ( $s['meili_admin_key'] ?? '' );
+		$meili_url = Settings::server_url();
+		$key       = Settings::admin_key();
 		if ( ! $meili_url || ! $key ) return new \WP_Error( 'no_config', 'No Meilisearch config', [ 'status' => 400 ] );
 
-		$index = sanitize_text_field( $req->get_param( 'index' ) ?? '' );
+		$index = $req->get_param( 'index' );
+		if ( ! Settings::valid_index( $index ) ) return new \WP_Error( 'invalid_index', 'Invalid site index', [ 'status' => 400 ] );
 		$query = sanitize_text_field( $req->get_param( 'query' ) ?? '' );
 
 		$resp = wp_remote_post( "{$meili_url}/indexes/{$index}/search", [
+			'redirection' => 0,
 			'headers' => [ 'Authorization' => "Bearer {$key}", 'Content-Type' => 'application/json' ],
 			'body'    => wp_json_encode( [ 'q' => $query, 'limit' => 20, 'attributesToRetrieve' => [ 'id', 'text', 'url', 'title', 'collection', 'page_number' ] ] ),
 			'timeout' => 15,
 		] );
-		if ( is_wp_error( $resp ) ) return $resp;
+		if ( is_wp_error( $resp ) ) return self::meili_error( 'doc_search', $resp->get_error_message(), 'Meilisearch niet bereikbaar.', 502 );
 		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
 		return new \WP_REST_Response( $body['hits'] ?? [] );
 	}
 
 	public function doc_save( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
-		$s         = Settings::get();
-		$meili_url = $s['meili_url'] ?? '';
-		$key_file  = '/run/secrets/meilisearch_master_key';
-		$key       = is_readable( $key_file ) ? trim( (string) file_get_contents( $key_file ) ) : (string) ( $s['meili_admin_key'] ?? '' );
+		$meili_url = Settings::server_url();
+		$key       = Settings::admin_key();
 		if ( ! $meili_url || ! $key ) return new \WP_Error( 'no_config', 'No Meilisearch config', [ 'status' => 400 ] );
 
-		$index = sanitize_text_field( $req->get_param( 'index' ) ?? '' );
+		$index = $req->get_param( 'index' );
+		if ( ! Settings::valid_index( $index ) ) return new \WP_Error( 'invalid_index', 'Invalid site index', [ 'status' => 400 ] );
 		$id    = sanitize_text_field( $req->get_param( 'id' ) ?? '' );
 		$text  = sanitize_textarea_field( $req->get_param( 'text' ) ?? '' );
 		if ( ! $id ) return new \WP_Error( 'no_id', 'No document ID', [ 'status' => 400 ] );
 
 		$resp = wp_remote_request( "{$meili_url}/indexes/{$index}/documents", [
+			'redirection' => 0,
 			'method'  => 'PUT',
 			'headers' => [ 'Authorization' => "Bearer {$key}", 'Content-Type' => 'application/json' ],
 			'body'    => wp_json_encode( [ [ 'id' => $id, 'text' => $text ] ] ),
 			'timeout' => 15,
 		] );
-		if ( is_wp_error( $resp ) ) return $resp;
+		if ( is_wp_error( $resp ) ) return self::meili_error( 'doc_save', $resp->get_error_message(), 'Meilisearch niet bereikbaar.', 502 );
 		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
 		return new \WP_REST_Response( $body );
 	}
 
 	public static function meili_client_and_index_for( string $type ): array|\WP_Error {
 		$s         = Settings::get();
-		$meili_url = $s['meili_url'] ?? '';
-		$key_file  = '/run/secrets/meilisearch_master_key';
-		$key       = is_readable( $key_file )
-			? trim( (string) file_get_contents( $key_file ) )
-			: (string) ( $s['meili_admin_key'] ?? '' );
+		$meili_url = Settings::server_url();
+		$key       = Settings::admin_key();
 		if ( ! $meili_url || ! $key ) return new \WP_Error( 'no_config', 'Meilisearch admin key not configured', [ 'status' => 400 ] );
 		$client = new \Meilisearch\Client( $meili_url, $key );
 		$index_name = $type === 'content'
 			? Settings::content_index()
 			: ( $s['index_prefix'] ?? 'fav' ) . '_media';
+		if ( ! Settings::valid_index( $index_name ) ) return new \WP_Error( 'invalid_index', 'Invalid site index', [ 'status' => 400 ] );
 		return [ $client, $client->index( $index_name ), $meili_url, $s ];
 	}
 
@@ -860,6 +1025,7 @@ final class TreeController {
 		$src_ext   = strtolower( $file->getExtension() );
 		$dir       = $file->getPath();
 		$collection = ltrim( str_replace( $root, '', $dir ), '/' );
+		if ( self::is_deleted_collection( $collection ) || $file->isLink() ) return null;
 		if ( ! self::is_indexable_source( $file->getFilename(), $collection ) || ( $src_ext !== 'txt' && $src_ext !== 'md' ) ) return null;
 
 		$text = trim( (string) file_get_contents( $file->getPathname() ) );
@@ -939,9 +1105,7 @@ final class TreeController {
 		try {
 			// 1. Build new structure from server PNGs: normalized_leaf → [collection, page_count]
 			$new_cols = [];
-			$it = new \RecursiveIteratorIterator(
-				new \RecursiveDirectoryIterator( $root, \FilesystemIterator::SKIP_DOTS )
-			);
+			$it = self::scan_iterator( $root );
 			foreach ( $it as $file ) {
 				if ( $file->getExtension() !== 'png' ) continue;
 				if ( ! preg_match( '/^page_\d+\.png$/', $file->getFilename() ) ) continue;
@@ -971,6 +1135,7 @@ final class TreeController {
 			// Group old docs by collection
 			$old_cols = [];
 			foreach ( $old_docs as $doc ) {
+				if ( self::is_deleted_collection( (string) $doc['collection'] ) ) continue;
 				$old_cols[ $doc['collection'] ][] = $doc;
 			}
 
@@ -1063,7 +1228,7 @@ final class TreeController {
 			] );
 
 		} catch ( \Exception $e ) {
-			return new \WP_Error( 'meili_error', $e->getMessage(), [ 'status' => 500 ] );
+			return self::meili_error( 'remap_index', $e->getMessage(), 'Hernoemen van index mislukt.' );
 		}
 	}
 
@@ -1075,10 +1240,7 @@ final class TreeController {
 		if ( ! $root ) return new \WP_REST_Response( [ 'renamed' => [], 'dry_run' => $dry_run ] );
 
 		$dirs = [];
-		$it   = new \RecursiveIteratorIterator(
-			new \RecursiveDirectoryIterator( $root, \FilesystemIterator::SKIP_DOTS ),
-			\RecursiveIteratorIterator::CHILD_FIRST
-		);
+		$it   = self::scan_iterator( $root, \RecursiveIteratorIterator::CHILD_FIRST );
 		foreach ( $it as $item ) {
 			if ( $item->isDir() ) $dirs[] = $item->getPathname();
 		}

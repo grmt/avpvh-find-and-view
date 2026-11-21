@@ -18,6 +18,18 @@ final class DocumentAiClient {
 	private const KEY_FILE     = '/run/secrets/gcp_documentai_key';
 	private const TRANSIENT    = 'avpvh_fav_docai_token';
 
+	private static function project_id(): string {
+		return defined( 'AVPVH_FAV_DOCAI_PROJECT_ID' ) ? (string) AVPVH_FAV_DOCAI_PROJECT_ID : self::PROJECT_ID;
+	}
+
+	private static function location(): string {
+		return defined( 'AVPVH_FAV_DOCAI_LOCATION' ) ? (string) AVPVH_FAV_DOCAI_LOCATION : self::LOCATION;
+	}
+
+	private static function processor_id(): string {
+		return defined( 'AVPVH_FAV_DOCAI_PROCESSOR_ID' ) ? (string) AVPVH_FAV_DOCAI_PROCESSOR_ID : self::PROCESSOR_ID;
+	}
+
 	/**
 	 * OCRs one page image and returns the extracted text.
 	 */
@@ -68,17 +80,18 @@ final class DocumentAiClient {
 		$token = self::access_token();
 		if ( is_wp_error( $token ) ) return $token;
 
+		$location = self::location();
 		$url = sprintf(
 			'https://%s-documentai.googleapis.com/v1/projects/%s/locations/%s/processors/%s:process',
-			self::LOCATION, self::PROJECT_ID, self::LOCATION, self::PROCESSOR_ID
+			rawurlencode( $location ), rawurlencode( self::project_id() ), rawurlencode( $location ), rawurlencode( self::processor_id() )
 		);
 
 		$resp = wp_remote_post( $url, [
-			'headers' => [
+			'headers'     => [
 				'Authorization' => "Bearer {$token}",
 				'Content-Type'  => 'application/json',
 			],
-			'body'    => wp_json_encode( [
+			'body'        => wp_json_encode( [
 				'rawDocument'    => [
 					'content'  => base64_encode( $image_bytes ),
 					'mimeType' => $mime_type,
@@ -87,15 +100,20 @@ final class DocumentAiClient {
 					'ocrConfig' => [ 'disableCharacterBoxesDetection' => true ],
 				],
 			] ),
-			'timeout' => 60,
+			'redirection' => 0,
+			'timeout'     => 60,
 		] );
-		if ( is_wp_error( $resp ) ) return $resp;
+		if ( is_wp_error( $resp ) ) {
+			error_log( '[avpvh-fav] Document AI request error: ' . $resp->get_error_message() );
+			return new \WP_Error( 'docai_error', 'Document AI-service niet bereikbaar.', [ 'status' => 502 ] );
+		}
 
 		$code = wp_remote_retrieve_response_code( $resp );
 		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
 		if ( $code !== 200 ) {
-			$message = $body['error']['message'] ?? "Document AI request failed (HTTP {$code})";
-			return new \WP_Error( 'docai_error', $message, [ 'status' => 502 ] );
+			$detail = is_array( $body ) ? (string) ( $body['error']['message'] ?? '' ) : '';
+			error_log( sprintf( '[avpvh-fav] Document AI HTTP %d: %s', $code, $detail ) );
+			return new \WP_Error( 'docai_error', 'Document AI-verwerking mislukt.', [ 'status' => 502 ] );
 		}
 
 		return (array) ( $body['document'] ?? [] );
@@ -130,19 +148,24 @@ final class DocumentAiClient {
 		$jwt = "{$unsigned}." . self::base64url( $signature );
 
 		$resp = wp_remote_post( self::TOKEN_URL, [
-			'body'    => [
+			'body'        => [
 				'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
 				'assertion'  => $jwt,
 			],
-			'timeout' => 15,
+			'redirection' => 0,
+			'timeout'     => 15,
 		] );
-		if ( is_wp_error( $resp ) ) return $resp;
+		if ( is_wp_error( $resp ) ) {
+			error_log( '[avpvh-fav] Document AI token error: ' . $resp->get_error_message() );
+			return new \WP_Error( 'docai_auth_failed', 'Document AI-authenticatie mislukt.', [ 'status' => 502 ] );
+		}
 
 		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
-		$token = $body['access_token'] ?? null;
-		if ( ! $token ) {
-			$message = $body['error_description'] ?? $body['error'] ?? 'Geen access token ontvangen';
-			return new \WP_Error( 'docai_auth_failed', $message, [ 'status' => 502 ] );
+		$token = is_array( $body ) ? ( $body['access_token'] ?? null ) : null;
+		if ( ! is_string( $token ) || $token === '' ) {
+			$detail = is_array( $body ) ? (string) ( $body['error_description'] ?? $body['error'] ?? '' ) : '';
+			error_log( '[avpvh-fav] Document AI token response failed: ' . $detail );
+			return new \WP_Error( 'docai_auth_failed', 'Document AI-authenticatie mislukt.', [ 'status' => 502 ] );
 		}
 
 		$ttl = max( 60, (int) ( $body['expires_in'] ?? 3600 ) - 60 );

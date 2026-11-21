@@ -24,12 +24,13 @@ final class IndexCommand {
 	 */
 	public static function reindex_posts( ?array $post_types = null ): int {
 		$s      = Settings::get();
-		$client = new MeilisearchClient( $s['meili_url'], Settings::admin_key() );
+		$client = new MeilisearchClient( Settings::server_url(), Settings::admin_key() );
 		$types  = $post_types ?? $s['post_types'];
 
 		$posts = get_posts( [
 			'post_type'      => $types,
 			'post_status'    => 'publish',
+			'has_password'   => Settings::includes_protected_content() ? null : false,
 			'posts_per_page' => -1,
 		] );
 
@@ -44,13 +45,14 @@ final class IndexCommand {
 		] );
 
 		$batch = [];
+		$current_ids = [];
 		foreach ( $posts as $post ) {
 			$item = PostIndexer::from_post( $post );
-			if ( $item ) $batch[] = $item;
+			if ( $item ) { $batch[] = $item; $current_ids[ $item->id ] = true; }
 
 			foreach ( PdfIndexer::attachments_of( $post ) as $attachment ) {
 				$pdf_item = PdfIndexer::from_attachment( $attachment, $post );
-				if ( $pdf_item ) $batch[] = $pdf_item;
+				if ( $pdf_item ) { $batch[] = $pdf_item; $current_ids[ $pdf_item->id ] = true; }
 			}
 
 			if ( count( $batch ) >= 100 ) {
@@ -59,6 +61,13 @@ final class IndexCommand {
 			}
 		}
 		if ( $batch ) $client->upsert( $index, ...$batch );
+
+		// Remove previously indexed protected/unpublished posts and their PDFs.
+		$stale = [];
+		foreach ( $client->fetch_all_documents( $index, [ 'id', 'type' ] ) as $doc ) {
+			if ( in_array( $doc['type'] ?? '', $types, true ) && ! isset( $current_ids[ $doc['id'] ] ) ) $stale[] = (string) $doc['id'];
+		}
+		foreach ( array_chunk( $stale, 1000 ) as $ids ) $client->delete( $index, ...$ids );
 
 		return count( $posts );
 	}
@@ -74,7 +83,7 @@ final class IndexCommand {
 
 	public static function reindex( array $args, array $assoc ): void {
 		$s      = Settings::get();
-		$client = new MeilisearchClient( $s['meili_url'], Settings::admin_key() );
+		$client = new MeilisearchClient( Settings::server_url(), Settings::admin_key() );
 		$index  = Settings::content_index();
 		$client->delete_all( $index );
 		\WP_CLI::log( 'Cleared index ' . $index );

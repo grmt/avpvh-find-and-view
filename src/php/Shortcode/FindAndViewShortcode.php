@@ -3,6 +3,7 @@
 namespace Avpvh\FindAndView\Shortcode;
 
 use Avpvh\FindAndView\Access\ScanEditPermission;
+use Avpvh\FindAndView\Access\SearchProxy;
 use Avpvh\FindAndView\Settings;
 
 final class FindAndViewShortcode {
@@ -40,11 +41,15 @@ final class FindAndViewShortcode {
 		$show_media   = $atts['show_media']   === 'true';
 		$show_content = $atts['show_content'] === 'true';
 		$browse_mode  = $atts['browse_mode']  === 'true';
+		$can_edit = ScanEditPermission::check();
+		$private = Settings::private_search();
+		$indexes = array_merge( $show_media ? [ Settings::media_index() ] : [], $show_content ? [ Settings::content_index() ] : [] );
 
 		self::$instances[] = [
 			'uid'          => $uid,
-			'meiliUrl'     => $s['meili_url'],
-			'meiliKey'     => $s['meili_key'],
+			'meiliUrl'     => $private ? home_url() : $s['meili_url'],
+			'meiliKey'     => $private ? '' : $s['meili_key'],
+			'searchProxy'  => $private ? SearchProxy::config( $indexes ) : null,
 			'mediaIndex'   => Settings::media_index(),
 			'contentIndex' => Settings::content_index(),
 			'perPage'      => (int) $atts['per_page'],
@@ -54,9 +59,9 @@ final class FindAndViewShortcode {
 			'browseMode'       => $browse_mode,
 			'browseRootLabel'  => $atts['browse_root_label'],
 			'placeholder'      => $atts['placeholder'],
-			'canEdit'          => ScanEditPermission::check(),
+			'canEdit'          => $can_edit,
 			'restRoot'         => rest_url( 'avpvh-fav/v1/' ),
-			'editNonce'        => wp_create_nonce( 'wp_rest' ),
+			'editNonce'        => $can_edit ? wp_create_nonce( 'wp_rest' ) : '',
 		];
 
 		ob_start();

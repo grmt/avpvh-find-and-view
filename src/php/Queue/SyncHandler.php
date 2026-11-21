@@ -60,6 +60,6 @@ final class SyncHandler {
 
 	private static function client(): MeilisearchClient {
 		$s = Settings::get();
-		return new MeilisearchClient( $s['meili_url'], Settings::admin_key() );
+		return new MeilisearchClient( Settings::server_url(), Settings::admin_key() );
 	}
 }

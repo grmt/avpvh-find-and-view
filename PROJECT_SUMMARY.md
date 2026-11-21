@@ -40,8 +40,9 @@ The plugin adds a WordPress settings page with tools for managing the index and 
 - WordPress content changes are observed and queued for indexing.
 - Content and media are written into Meilisearch indexes.
 - XLSX files placed in the scans tree are split by worksheet and groups of 100 rows, then indexed as searchable Markdown tables.
-- The frontend queries Meilisearch directly with a public read-only key.
-- Admin actions use the Meilisearch admin key or the master key from `/run/secrets/meilisearch_master_key` when available.
+- Public search queries Meilisearch directly with a read-only key. When `require_login` or `search_group` is configured, search and browse requests go through a WordPress REST proxy.
+- Admin actions use a site-scoped key from `/run/secrets/meilisearch_admin_key` or the saved admin-key setting, and communicate with Meilisearch via `AVPVH_FAV_MEILI_SERVER_URL` (default `http://meilisearch:7700`).
+- Password-protected posts and their PDFs are excluded unless `include_protected_content` is explicitly enabled alongside a `search_group`. Deleted scan backups (`verwijderd/`) are skipped during scan indexing.
 
 ## Code Structure
 

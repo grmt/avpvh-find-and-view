@@ -2,6 +2,8 @@
 
 namespace Avpvh\FindAndView\Index;
 
+use Avpvh\FindAndView\Settings;
+
 final class PdfIndexer {
 
 	/**
@@ -13,6 +15,8 @@ final class PdfIndexer {
 	 * the visitor on that page.
 	 */
 	public static function from_attachment( \WP_Post $attachment, \WP_Post $parent ): ?IndexItem {
+		if ( $parent->post_status !== 'publish' ) return null;
+		if ( ( $parent->post_password !== '' || $attachment->post_password !== '' ) && ! Settings::includes_protected_content() ) return null;
 		if ( $attachment->post_mime_type !== 'application/pdf' ) return null;
 
 		$path = get_attached_file( $attachment->ID );

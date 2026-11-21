@@ -3,6 +3,7 @@
 namespace Avpvh\FindAndView\Shortcode;
 
 use Avpvh\FindAndView\Settings;
+use Avpvh\FindAndView\Access\SearchProxy;
 
 final class EcliShortcode {
 	private static int $instance_count = 0;
@@ -30,11 +31,13 @@ final class EcliShortcode {
 		}
 
 		$uid = 'fav-ecli-' . ( ++self::$instance_count );
+		$private = Settings::private_search();
 
 		self::$instances[] = [
 			'uid'         => $uid,
-			'meiliUrl'    => $s['meili_url'],
-			'meiliKey'    => $s['meili_key'],
+			'meiliUrl'    => $private ? home_url() : $s['meili_url'],
+			'meiliKey'    => $private ? '' : $s['meili_key'],
+			'searchProxy' => $private ? SearchProxy::config( [ Settings::ecli_index() ] ) : null,
 			'ecliIndex'   => Settings::ecli_index(),
 			'placeholder' => $atts['placeholder'],
 		];

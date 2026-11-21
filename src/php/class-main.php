@@ -3,6 +3,7 @@
 namespace Avpvh\FindAndView;
 
 use Avpvh\FindAndView\Admin\SettingsPage;
+use Avpvh\FindAndView\Access\SearchProxy;
 use Avpvh\FindAndView\Admin\TreeController;
 use Avpvh\FindAndView\CLI\EcliIndexCommand;
 use Avpvh\FindAndView\CLI\IndexCommand;
@@ -25,6 +26,7 @@ final class Main {
 
 	public static function boot(): void {
 		SyncQueue::register_handlers();
+		add_action( 'template_redirect', [ Settings::class, 'protect_search_page_cache' ], 0 );
 
 		$s          = Settings::get();
 		$post_types = $s['post_types'];
@@ -34,6 +36,7 @@ final class Main {
 		( new EcliShortcode() )->register();
 		( new SettingsPage() )->register();
 		( new TreeController() )->register();
+		( new SearchProxy() )->register();
 
 		IndexCommand::register();
 		EcliIndexCommand::register();

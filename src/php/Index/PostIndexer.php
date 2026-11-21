@@ -2,9 +2,11 @@
 
 namespace Avpvh\FindAndView\Index;
 
+use Avpvh\FindAndView\Settings;
+
 final class PostIndexer {
 	public static function from_post( \WP_Post $post ): ?IndexItem {
-		if ( $post->post_status !== 'publish' ) return null;
+		if ( $post->post_status !== 'publish' || ( $post->post_password !== '' && ! Settings::includes_protected_content() ) ) return null;
 
 		// Mark block-level tag boundaries before stripping tags, otherwise
 		// adjacent elements with no text between them (e.g. one <p> per PDF

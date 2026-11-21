@@ -2,12 +2,9 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 import type { FavConfig } from './types';
 import { meiliSearch } from './meili';
+import { escapeHtml, highlightHtml, safeUrl, safeLocalOcrUrl, quoteFilter } from './escape';
 
 const DIFF_TOKEN_RE = /\s+|\S+/g;
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
-}
 
 // Word-level "track changes" diff, mirroring local_review_tool.py's inline diff
 // view: an LCS over whitespace/word tokens, deletions struck through,
@@ -123,8 +120,10 @@ export class Lightbox {
   // which must keep using item.url — CORS and matching page numbers only
   // work reliably against our own copy).
   private static openPdfHref(item: LightboxItem): string {
-    if (item.sourceUrl) return item.sourceUrl;
-    return item.page != null ? `${item.url}#page=${item.page}` : item.url;
+    const source = safeUrl(item.sourceUrl);
+    if (source) return source;
+    const url = safeUrl(item.url);
+    return url && item.page != null ? `${url}#page=${Number(item.page)}` : url;
   }
 
   // Remembers the user's preferred image/text split across lightbox opens
@@ -670,11 +669,18 @@ export class Lightbox {
     if (savedEngine && ['docai', 'tesseract', 'local'].includes(savedEngine)) {
       engineSelect.value = savedEngine;
     }
-    localUrlInput.value = localStorage.getItem('avpvhFavLocalOcrUrl') || 'http://localhost:5001/v1/convert/file';
+    const defaultLocalUrl = 'http://localhost:5001/v1/convert/file';
+    localUrlInput.value = safeLocalOcrUrl(localStorage.getItem('avpvhFavLocalOcrUrl')) || defaultLocalUrl;
     localUrlInput.style.display = engineSelect.value === 'local' ? '' : 'none';
 
     localUrlInput.addEventListener('change', () => {
-      localStorage.setItem('avpvhFavLocalOcrUrl', localUrlInput.value.trim());
+      const checked = safeLocalOcrUrl(localUrlInput.value);
+      if (checked) {
+        localUrlInput.value = checked;
+        localStorage.setItem('avpvhFavLocalOcrUrl', checked);
+      } else {
+        localStorage.removeItem('avpvhFavLocalOcrUrl');
+      }
     });
     engineSelect.addEventListener('change', () => {
       localStorage.setItem('avpvhFavOcrEngine', engineSelect.value);
@@ -795,8 +801,10 @@ export class Lightbox {
     imgEl: HTMLImageElement, x: number, y: number, w: number, h: number,
     previewEl: HTMLImageElement, textEl: HTMLTextAreaElement, statusEl: HTMLElement, titleEl: HTMLElement,
   ): Promise<void> {
-    const url = (this.el!.querySelector('.fav-lb-crop-local-url') as HTMLInputElement).value.trim();
-    if (!url) { statusEl.textContent = 'Vul eerst het adres van docling-serve in.'; return; }
+    const rawUrl = (this.el!.querySelector('.fav-lb-crop-local-url') as HTMLInputElement).value.trim();
+    if (!rawUrl) { statusEl.textContent = 'Vul eerst het adres van docling-serve in.'; return; }
+    const url = safeLocalOcrUrl(rawUrl);
+    if (!url) { statusEl.textContent = 'Alleen lokale adressen (localhost of 127.0.0.1) zijn toegestaan voor lokale OCR.'; return; }
 
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(imgEl.naturalWidth * w));
@@ -978,7 +986,7 @@ export class Lightbox {
         imgEl.style.display = 'none';
         loadingEl.style.display = '';
         loadingEl.textContent = 'Laden…';
-        this.renderPdfPage(item.url, item.page, item.highlightTerms ?? [])
+        this.renderPdfPage(safeUrl(item.url), item.page, item.highlightTerms ?? [])
           .then(({ blobUrl, rects }) => {
             if (token !== this.showToken) return; // superseded by newer navigation
             if (!blobUrl) { loadingEl.textContent = 'Kon PDF-pagina niet laden.'; return; }
@@ -994,7 +1002,7 @@ export class Lightbox {
       } else {
         loadingEl.style.display = 'none';
         imgEl.style.display = '';
-        this.setImage(item.url);
+        this.setImage(safeUrl(item.url));
       }
     }
 
@@ -1123,9 +1131,16 @@ export class Lightbox {
 
     if (engine === 'local') {
       const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
-      const url = (el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement)?.value.trim()
+      const rawUrl = (el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement)?.value.trim()
         || localStorage.getItem('avpvhFavLocalOcrUrl')
         || 'http://localhost:5001/v1/convert/file';
+      const url = safeLocalOcrUrl(rawUrl);
+      if (!url) {
+        statusEl.textContent = 'Alleen lokale adressen (localhost of 127.0.0.1) zijn toegestaan voor lokale OCR.';
+        this.saving = false;
+        ocrBtn.disabled = false;
+        return;
+      }
 
       const canvas = document.createElement('canvas');
       canvas.width = imgEl.naturalWidth || imgEl.width;
@@ -1323,8 +1338,8 @@ export class Lightbox {
     if (!ok || !data.versions) return;
 
     panel.innerHTML = data.versions.map(v => v.exists
-      ? `<div class="fav-lb-history-row"><span>.bak${v.version}${v.version === 1 ? ' (meest recent)' : ''} — ${v.mtime}</span><button type="button" class="fav-lb-btn fav-lb-history-diff-btn" data-version="${v.version}">Diff</button></div>`
-      : `<div class="fav-lb-history-row fav-lb-history-empty"><span>.bak${v.version} — (geen back-up)</span></div>`,
+      ? `<div class="fav-lb-history-row"><span>.bak${escapeHtml(v.version)}${v.version === 1 ? ' (meest recent)' : ''} — ${escapeHtml(v.mtime)}</span><button type="button" class="fav-lb-btn fav-lb-history-diff-btn" data-version="${escapeHtml(v.version)}">Diff</button></div>`
+      : `<div class="fav-lb-history-row fav-lb-history-empty"><span>.bak${escapeHtml(v.version)} — (geen back-up)</span></div>`,
     ).join('');
     panel.querySelectorAll<HTMLButtonElement>('.fav-lb-history-diff-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -1411,7 +1426,7 @@ export class Lightbox {
     const data = await meiliSearch<{ hits?: Array<{ page_number?: number; _formatted?: { text?: string } }> }>(
       this.cfg, this.cfg.mediaIndex, {
         q: query,
-        filter: `collection = "${item.collection}"`,
+        filter: `collection = ${quoteFilter(item.collection)}`,
         limit: 30,
         attributesToRetrieve: ['page_number'],
         attributesToCrop: ['text'],
@@ -1428,9 +1443,9 @@ export class Lightbox {
       return;
     }
     resultsEl.innerHTML = hits.map(h =>
-      `<button type="button" class="fav-lb-search-result" data-page="${h.page_number ?? ''}">` +
-      `<span class="fav-lb-search-result-label">Pagina ${h.page_number ?? '?'}</span>` +
-      `<span class="fav-lb-search-result-snippet">${h._formatted?.text ?? ''}</span></button>`,
+      `<button type="button" class="fav-lb-search-result" data-page="${escapeHtml(h.page_number)}">` +
+      `<span class="fav-lb-search-result-label">Pagina ${escapeHtml(h.page_number ?? '?')}</span>` +
+      `<span class="fav-lb-search-result-snippet">${highlightHtml(h._formatted?.text)}</span></button>`,
     ).join('');
     resultsEl.querySelectorAll<HTMLButtonElement>('.fav-lb-search-result').forEach(btn => {
       const pageNum = Number(btn.dataset['page']);
