@@ -121,6 +121,7 @@ namespace {
 	function get_queried_object(): ?WP_Post { return $GLOBALS['queried_post']; }
 	function has_shortcode( string $content, string $tag ): bool { return preg_match( '/\[' . preg_quote( $tag, '/' ) . '(?:\s|\])/', $content ) === 1; }
 	function wp_parse_args( array $a, array $b ): array { return array_merge( $b, $a ); }
+	function wp_parse_url( string $url, int $component = -1 ): mixed { return parse_url( $url, $component ); }
 	function get_option( string $name, mixed $fallback = null ): array { return $GLOBALS['options']; }
 	function is_wp_error( mixed $value ): bool { return $value instanceof WP_Error; }
 	function wp_upload_dir(): array { return ['basedir' => $GLOBALS['tmp'], 'baseurl' => 'https://site.invalid/uploads']; }

@@ -97,8 +97,8 @@ final class Settings {
 	/** Credentials must never be sent to an option-controlled destination. */
 	public static function server_url(): string {
 		$url = defined( 'AVPVH_FAV_MEILI_SERVER_URL' ) ? (string) AVPVH_FAV_MEILI_SERVER_URL : 'http://meilisearch:7700';
-		$parts = parse_url( $url );
-		if ( ! $parts || ! in_array( $parts['scheme'] ?? '', [ 'http', 'https' ], true ) || empty( $parts['host'] )
+		$parts = wp_parse_url( $url );
+		if ( ! is_array( $parts ) || ! in_array( $parts['scheme'] ?? '', [ 'http', 'https' ], true ) || empty( $parts['host'] )
 			|| isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) ) {
 			throw new \RuntimeException( 'Invalid AVPVH_FAV_MEILI_SERVER_URL' );
 		}
