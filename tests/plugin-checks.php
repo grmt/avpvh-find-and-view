@@ -150,6 +150,7 @@ namespace {
 	function home_url(): string { return 'https://site.invalid'; }
 	function get_queried_object_id(): int { return 100; }
 	function apply_filters( string $name, mixed $value, mixed ...$args ): mixed { return $value; }
+	function add_filter( string $hook, callable $callback, int $priority = 10, int $accepted_args = 1 ): void { $GLOBALS['filters'][$hook][] = $callback; }
 	function nocache_headers(): void {
 		if ( headers_sent() ) throw new RuntimeException( 'Cache headers attempted after output' );
 		$GLOBALS['nocache']++;
@@ -336,6 +337,10 @@ namespace {
 		IndexCommand::reindex_posts();
 		check( $content->docs === [], 'Public reindex retained protected content' );
 
+		( new SearchProxy() )->register();
+		$exempt = array_reduce( $GLOBALS['filters']['avpvh_mbrs_2fa_exempt_rest_routes'] ?? [], static fn( mixed $r, callable $f ): mixed => $f( $r ), ['/other/v1/x'] );
+		check( $exempt === ['/other/v1/x', '/avpvh-fav/v1/search'], 'Search route not exempted from the 2FA step-up, or other routes dropped' );
+		check( ! array_filter( $exempt, static fn( string $r ): bool => str_contains( $r, '/scan' ) ), 'A writing route was exempted from 2FA' );
 		$old_scope = SearchProxy::config( [Settings::content_index()] );
 		$old_payload = array_merge( $old_scope, ['queries' => [['indexUid' => Settings::content_index()]]] );
 		$options['require_login'] = false;

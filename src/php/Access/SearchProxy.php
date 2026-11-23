@@ -14,6 +14,15 @@ final class SearchProxy {
 				'callback' => [ self::class, 'search' ],
 			] );
 		} );
+		// Search only reads, although it is a POST. avpvh-members otherwise
+		// blocks it for admins whose session has no 2FA.
+		add_filter( 'avpvh_mbrs_2fa_exempt_rest_routes', [ self::class, 'exempt_from_2fa_step_up' ] );
+	}
+
+	public static function exempt_from_2fa_step_up( mixed $routes ): array {
+		$routes = is_array( $routes ) ? $routes : [];
+		if ( ! in_array( '/avpvh-fav/v1/search', $routes, true ) ) $routes[] = '/avpvh-fav/v1/search';
+		return $routes;
 	}
 
 	/** Apply the site policy on every request, including old signed scopes. */
