@@ -43,9 +43,9 @@ Shared working notes for agents in this repository.
 
 ## External Notes
 
-- Team workflow preference: `memory/feedback_feature_branches.md`.
+- Work on a feature branch; never commit to `main`.
 
 ## Handoff Notes
 
 - [`PROJECT_SUMMARY.md`](PROJECT_SUMMARY.md) contains a higher-level overview of the project.
-- `TODO.md` still lists storage backend work that has not been implemented yet.
+- `TODO.local.md` (not in Git) holds open follow-ups and operations notes. Keep infrastructure details (project IDs, server paths, incident notes) there, not in tracked files.
