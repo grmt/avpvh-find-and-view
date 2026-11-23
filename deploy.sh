@@ -78,7 +78,7 @@ trap 'composer install' EXIT
 # actually disappears server-side too, not just stops being referenced.
 # Plugin source is writable only by its deployment owner. The server must
 # keep that owner distinct from php-fpm; uploads/scans remain writable.
-rsync_opts=(-rltpv --omit-dir-times --no-owner --no-group --chmod=D755,F644)
+rsync_opts=(-rltv --omit-dir-times --no-owner --no-group --no-perms --chmod=D775,F664)
 for site in "${sites[@]}"; do
 	dest="${DEPLOY_HOST}:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
 
