@@ -9,7 +9,8 @@ namespace Meilisearch\Contracts {
 		public function setOffset( int $n ): self { $this->offset = $n; return $this; }
 		public function setLimit( int $n ): self { $this->limit = $n; return $this; }
 		public function setFields( array $fields ): self { return $this; }
-		public function setFilter( array $filter ): self { return $this; }
+		public array $filter = [];
+		public function setFilter( array $filter ): self { $this->filter = $filter; return $this; }
 	}
 }
 namespace Meilisearch {
@@ -91,8 +92,14 @@ namespace {
 			return ['taskUid' => 1];
 		}
 		public function getDocuments( object $query ): object {
-			$docs = array_slice( array_values( $this->docs ), $query->offset, $query->limit );
-			return new class( $docs, count( $this->docs ) ) {
+			$all = array_values( $this->docs );
+			// Only the scoped filter is modelled: type = scan AND collection = "…".
+			if ( preg_match( '/^type = scan AND collection = "((?:[^"\\\\]|\\\\.)*)"$/', $query->filter[0] ?? '', $m ) === 1 ) {
+				$collection = stripcslashes( $m[1] );
+				$all = array_values( array_filter( $all, static fn( array $d ): bool => ( $d['type'] ?? '' ) === 'scan' && ( $d['collection'] ?? null ) === $collection ) );
+			}
+			$docs = array_slice( $all, $query->offset, $query->limit );
+			return new class( $docs, count( $all ) ) {
 				public function __construct( private array $docs, private int $total ) {}
 				public function getResults(): array { return $this->docs; }
 				public function getTotal(): int { return $this->total; }
@@ -251,6 +258,29 @@ namespace {
 		check( ! isset( $index->docs['stale_deleted'] ), 'Stale deleted document retained' );
 		check( $tree->delete_scan_page( new WP_REST_Request( ['collection' => 'parent/book1', 'page_number' => 1] ) ) instanceof WP_REST_Response, 'Delete failed' );
 		check( $index->docs === [], 'Deleted page was immediately reindexed' );
+
+		// Deleting the same page number twice keeps both copies, and only the
+		// affected collection is reindexed.
+		wp_mkdir_p( "$tmp/scans/book2" );
+		foreach ( [1, 2, 3] as $n ) {
+			file_put_contents( "$tmp/scans/book2/page_0$n.txt", "Text of page $n" );
+			file_put_contents( "$tmp/scans/book2/page_0$n.png", "png $n" );
+		}
+		file_put_contents( "$tmp/scans/book2/page_01.txt.bak1", 'Older text of page 1' );
+		$index->docs['unrelated'] = ['id' => 'unrelated', 'type' => 'scan', 'collection' => 'elsewhere'];
+		$index->docs['book2__page_03'] = ['id' => 'book2__page_03', 'type' => 'scan', 'collection' => 'book2'];
+		check( $tree->delete_scan_page( new WP_REST_Request( ['collection' => 'book2', 'page_number' => 1] ) ) instanceof WP_REST_Response, 'First delete failed' );
+		check( $tree->delete_scan_page( new WP_REST_Request( ['collection' => 'book2', 'page_number' => 1] ) ) instanceof WP_REST_Response, 'Second delete failed' );
+		check( file_get_contents( "$tmp/scans/book2/verwijderd/page_01.txt" ) === 'Text of page 1', 'First deleted page lost' );
+		check( file_get_contents( "$tmp/scans/book2/verwijderd/page_01.txt.bak1" ) === 'Older text of page 1', 'Backup of deleted page lost' );
+		$second = glob( "$tmp/scans/book2/verwijderd/page_01~*" );
+		sort( $second );
+		check( count( $second ) === 2 && str_ends_with( $second[0], '.png' ) && file_get_contents( $second[1] ) === 'Text of page 2', 'Second deletion overwrote the first' );
+		check( file_get_contents( "$tmp/scans/book2/page_01.txt" ) === 'Text of page 3' && ! file_exists( "$tmp/scans/book2/page_02.txt" ), 'Pages not renumbered' );
+		check( isset( $index->docs['unrelated'] ), 'Delete pruned another collection' );
+		check( ! isset( $index->docs['book2__page_03'] ) && ! isset( $index->docs['book2__page_02'] ), 'Stale page docs kept after delete' );
+		check( ( $index->docs['book2__page_01']['text'] ?? '' ) === 'Text of page 3', 'Renumbered page not reindexed' );
+		unset( $index->docs['unrelated'] );
 
 		foreach ( ['../keys', 'fav_media/../../keys', 'fav_media?x', 'fav_media#x', 'other_media', 'fav_media%2Fkeys', ['fav_media']] as $bad ) {
 			foreach ( ['doc_search', 'doc_save', 'apply_index_settings'] as $method ) check( is_wp_error( $tree->$method( new WP_REST_Request( ['index' => $bad, 'id' => '1', 'text' => 'test'] ) ) ), "Invalid index accepted by $method" );
