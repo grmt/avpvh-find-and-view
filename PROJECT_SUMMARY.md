@@ -63,8 +63,6 @@ The plugin adds a WordPress settings page with tools for managing the index and 
 ## Notes
 
 - [`AGENTS.md`](AGENTS.md) is the agent handoff file for repo conventions and workflow.
-- `TODO.md` still lists future storage backends:
-  - `S3Provider`
-  - `FileShareProvider`
-- Team workflow preference: `memory/feedback_feature_branches.md`.
+- Open follow-ups and operations notes live in `TODO.local.md`, which is not in Git (it names internal infrastructure). Not yet built: the `S3Provider` and `FileShareProvider` storage backends.
+- Work on a feature branch; never commit to `main`.
 - The project currently includes local, Google Drive, and S3-related storage abstractions in the PHP source tree.
