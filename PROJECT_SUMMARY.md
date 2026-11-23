@@ -65,4 +65,5 @@ The plugin adds a WordPress settings page with tools for managing the index and 
 - [`AGENTS.md`](AGENTS.md) is the agent handoff file for repo conventions and workflow.
 - Open follow-ups and operations notes live in `TODO.local.md`, which is not in Git (it names internal infrastructure). Not yet built: the `S3Provider` and `FileShareProvider` storage backends.
 - Work on a feature branch; never commit to `main`.
+- Rotating the Meilisearch search and admin keys is done by an ops script kept with the server configuration, not in this repo.
 - The project currently includes local, Google Drive, and S3-related storage abstractions in the PHP source tree.
