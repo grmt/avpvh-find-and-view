@@ -570,9 +570,9 @@ final class TreeController {
 	/**
 	 * Moves a page's files (all extensions + backups) to a "verwijderd"
 	 * subfolder and shifts every later page down by one, mirroring the
-	 * local review tool. Reindexes the whole collection afterwards via the
-	 * existing, already-proven reindex_scans() rather than hand-rolling
-	 * renumbered Meilisearch upserts.
+	 * local review tool. Earlier deletions in verwijderd/ are never
+	 * overwritten, and only this collection is reindexed afterwards: a full
+	 * reindex_scans() would also prune scan docs of unrelated collections.
 	 */
 	public function delete_scan_page( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
 		$rate_err = self::check_rate_limit( 'delete', self::RATE_LIMIT_DELETE );
@@ -590,12 +590,19 @@ final class TreeController {
 		if ( preg_match( '/^page_(\d+)$/', $label, $lm ) === 1 ) $width = strlen( $lm[1] );
 
 		$removed_dir = $dir . '/verwijderd';
-		if ( ! is_dir( $removed_dir ) ) wp_mkdir_p( $removed_dir );
+		if ( ! is_dir( $removed_dir ) && ! wp_mkdir_p( $removed_dir ) ) {
+			return new \WP_Error( 'move_failed', 'Map voor verwijderde pagina\'s kon niet worden gemaakt', [ 'status' => 500 ] );
+		}
 
-		foreach ( $this->related_page_files( $dir, $label ) as $f ) {
-			$dest = "{$removed_dir}/{$f}";
-			if ( is_file( $dest ) ) wp_delete_file( $dest );
-			$this->move_path( "{$dir}/{$f}", $dest );
+		$files  = $this->related_page_files( $dir, $label );
+		$suffix = self::free_removed_suffix( $removed_dir, $label, $files );
+		foreach ( $files as $f ) {
+			$dest = "{$removed_dir}/" . self::with_suffix( $f, $label, $suffix );
+			// Stop before renumbering: a later page would otherwise be renamed
+			// over a file that was never moved away.
+			if ( ! $this->move_path( "{$dir}/{$f}", $dest, false ) ) {
+				return new \WP_Error( 'move_failed', 'Pagina kon niet naar verwijderd/ worden verplaatst', [ 'status' => 500 ] );
+			}
 		}
 
 		// Shift every later page down by one, ascending so renames never collide.
@@ -616,12 +623,95 @@ final class TreeController {
 			}
 		}
 
-		$result = $this->reindex_scans();
+		$result = $this->reindex_collection( $dir );
 		if ( is_wp_error( $result ) ) return $result;
 
 		self::audit_log( 'scan_delete', [ 'collection' => $collection, 'page_number' => $page_number ] );
 
 		return new \WP_REST_Response( [ 'ok' => true ] );
+	}
+
+	/**
+	 * Returns '' when none of $files exists in $removed_dir yet, else a
+	 * "~<timestamp>[-n]" suffix that is free for all of them, so one deleted
+	 * page keeps a single shared name and an earlier deletion survives.
+	 */
+	private static function free_removed_suffix( string $removed_dir, string $label, array $files ): string {
+		$base = '~' . gmdate( 'Ymd-His' );
+		for ( $n = 0; $n < 100; $n++ ) {
+			$suffix = $n === 0 ? '' : ( $n === 1 ? $base : "{$base}-{$n}" );
+			$taken  = false;
+			foreach ( $files as $f ) {
+				if ( file_exists( "{$removed_dir}/" . self::with_suffix( $f, $label, $suffix ) ) ) {
+					$taken = true;
+					break;
+				}
+			}
+			if ( ! $taken ) return $suffix;
+		}
+		return $base . '-' . bin2hex( random_bytes( 4 ) );
+	}
+
+	/** page_01.png.bak1 + "~x" -> page_01~x.png.bak1 */
+	private static function with_suffix( string $file, string $label, string $suffix ): string {
+		return $label . $suffix . substr( $file, strlen( $label ) );
+	}
+
+	/**
+	 * Re-indexes the page and chat documents directly in one collection
+	 * folder and removes that collection's scan docs that no longer exist,
+	 * without touching any other collection.
+	 */
+	private function reindex_collection( string $dir ): \WP_Error|null {
+		$root = realpath( $this->scan_root() );
+		if ( ! $root ) return new \WP_Error( 'no_root', 'Scans directory not found', [ 'status' => 404 ] );
+		$result = $this->meili_client_and_index();
+		if ( is_wp_error( $result ) ) return $result;
+		[ $client, $index ] = $result;
+
+		$base_url   = $this->scan_base_url();
+		$collection = ltrim( substr( $dir, strlen( $root ) ), '/' );
+		$docs       = [];
+		foreach ( scandir( $dir ) as $entry ) {
+			$path = "{$dir}/{$entry}";
+			if ( ! is_file( $path ) || is_link( $path ) ) continue;
+			$doc = self::build_source_document( new \SplFileInfo( $path ), $root, $base_url );
+			if ( $doc === null ) continue;
+			// Same rule as reindex_scans(): page_N.md wins over page_N.txt.
+			if ( isset( $docs[ $doc['id'] ] ) && $docs[ $doc['id'] ]['text_format'] === 'md' && $doc['text_format'] !== 'md' ) continue;
+			$docs[ $doc['id'] ] = $doc;
+		}
+
+		try {
+			if ( $docs ) {
+				$task = $index->addDocuments( array_values( $docs ) );
+				$client->waitForTask( $task['taskUid'], 60000 );
+			}
+
+			$quoted   = '"' . addcslashes( $collection, '"\\' ) . '"';
+			$existing = [];
+			$offset   = 0;
+			do {
+				$page = $index->getDocuments(
+					( new DocumentsQuery() )
+						->setFilter( [ "type = scan AND collection = {$quoted}" ] )
+						->setFields( [ 'id' ] )
+						->setLimit( 1000 )
+						->setOffset( $offset )
+				);
+				foreach ( $page->getResults() as $doc ) $existing[] = $doc['id'];
+				$offset += 1000;
+			} while ( $offset < $page->getTotal() );
+
+			$stale = array_values( array_diff( $existing, array_keys( $docs ) ) );
+			if ( $stale ) {
+				$task = $index->deleteDocuments( $stale );
+				$client->waitForTask( $task['taskUid'], 60000 );
+			}
+		} catch ( \Exception $e ) {
+			return self::meili_error( 'reindex_collection', $e->getMessage(), 'Herindexeren van de collectie mislukt.' );
+		}
+		return null;
 	}
 
 	/** Regenerates consolidated_extracted_text.txt from every page's current text. */
