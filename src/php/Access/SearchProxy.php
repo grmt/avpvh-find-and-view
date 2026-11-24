@@ -6,14 +6,33 @@ use Avpvh\FindAndView\Settings;
 
 /** Session-checked search; no reusable Meilisearch credential reaches a browser. */
 final class SearchProxy {
+	private const NAMESPACE = 'avpvh-fav/v1';
+	private const ROUTE = '/search';
+
 	public function register(): void {
 		add_action( 'rest_api_init', static function (): void {
-			register_rest_route( 'avpvh-fav/v1', '/search', [
+			register_rest_route( self::NAMESPACE, self::ROUTE, [
 				'methods' => 'POST',
 				'permission_callback' => [ self::class, 'can_search' ],
 				'callback' => [ self::class, 'search' ],
 			] );
 		} );
+		// Search only reads, although it is a POST. avpvh-members otherwise
+		// blocks it for admins whose session has no 2FA.
+		add_filter( 'avpvh_mbrs_2fa_exempt_rest_routes', [ self::class, 'exempt_from_2fa_step_up' ] );
+	}
+
+	/**
+	 * @param mixed $routes Routes exempted so far.
+	 * @return array<mixed>
+	 */
+	public static function exempt_from_2fa_step_up( mixed $routes ): array {
+		$routes = is_array( $routes ) ? $routes : [];
+		$search = '/' . self::NAMESPACE . self::ROUTE;
+		if ( ! in_array( $search, $routes, true ) ) {
+			$routes[] = $search;
+		}
+		return $routes;
 	}
 
 	/** Apply the site policy on every request, including old signed scopes. */
@@ -31,7 +50,7 @@ final class SearchProxy {
 		if ( $group === '' && class_exists( \AVPVH_Nav_Auth::class ) && get_queried_object_id() === \AVPVH_Nav_Auth::DOC_SEARCH_PAGE_ID ) $group = 'boek';
 		$group = (string) apply_filters( 'avpvh_fav_search_group', $group, $indexes );
 		return [
-			'url' => rest_url( 'avpvh-fav/v1/search' ),
+			'url' => rest_url( self::NAMESPACE . self::ROUTE ),
 			'nonce' => wp_create_nonce( 'wp_rest' ),
 			'indexes' => $indexes,
 			'group' => $group,
