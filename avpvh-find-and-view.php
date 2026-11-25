@@ -9,6 +9,7 @@
  * Text Domain:  avpvh-find-and-view
  * Domain Path:  /languages
  * License:      MIT
+ * License URI:  https://opensource.org/licenses/MIT
  * Requires PHP: 8.4
  * Requires at least: 7.1
  *
