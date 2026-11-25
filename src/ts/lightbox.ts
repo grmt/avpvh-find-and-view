@@ -1494,7 +1494,7 @@ export class Lightbox {
     try {
       let task = this.pdfDocs.get(url);
       if (!task) {
-        task = pdfjsLib.getDocument({ url, isEvalSupported: false });
+        task = pdfjsLib.getDocument({ url });
         this.pdfDocs.set(url, task);
       }
       const doc = await task.promise;
@@ -1517,7 +1517,7 @@ export class Lightbox {
       canvas.width = viewport.width;
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d')!;
-      await page.render({ canvasContext: ctx, viewport }).promise;
+      await page.render({ canvas, canvasContext: ctx, viewport }).promise;
 
       const blobUrl = await new Promise<string | null>(resolve => {
         canvas.toBlob(blob => resolve(blob ? URL.createObjectURL(blob) : null), 'image/png');
