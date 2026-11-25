@@ -11,7 +11,7 @@ set -euo pipefail
 deploy_env="$(dirname "$0")/deploy.local.env"
 deploy_setting() {
 	local name="$1" value="${!1:-}"
-	if [ -z "$value" ] && [ -f "$deploy_env" ]; then
+	if [[ -z "$value" && -f "$deploy_env" ]]; then
 		value=$(sed -n "s/^${name}=//p" "$deploy_env" | head -1)
 		value="${value%\"}"; value="${value#\"}"
 	fi
@@ -21,7 +21,7 @@ DEPLOY_HOST=$(deploy_setting AVPVH_DEPLOY_HOST)
 DEPLOY_PATH=$(deploy_setting AVPVH_DEPLOY_PATH)
 read -r -a default_sites <<< "$(deploy_setting AVPVH_DEPLOY_SITES)"
 read -r -a extra_sites <<< "$(deploy_setting AVPVH_DEPLOY_EXTRA)"
-if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_PATH" ] || (( ${#default_sites[@]} == 0 )); then
+if [[ -z "$DEPLOY_HOST" || -z "$DEPLOY_PATH" ]] || (( ${#default_sites[@]} == 0 )); then
 	echo "Set AVPVH_DEPLOY_HOST, AVPVH_DEPLOY_PATH and AVPVH_DEPLOY_SITES (see deploy.local.env.example)." >&2
 	exit 1
 fi

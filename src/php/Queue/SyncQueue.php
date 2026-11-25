@@ -29,7 +29,9 @@ final class SyncQueue {
 
 	/** Retry removing protected content later, e.g. when Meilisearch was down. */
 	public static function schedule_purge_protected( int $delay = self::PURGE_RETRY ): void {
-		if ( wp_next_scheduled( self::PURGE_ACTION ) ) return;
+		if ( wp_next_scheduled( self::PURGE_ACTION ) ) {
+			return;
+		}
 		wp_schedule_single_event( time() + $delay, self::PURGE_ACTION );
 	}
 

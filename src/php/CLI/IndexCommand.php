@@ -67,7 +67,9 @@ final class IndexCommand {
 		foreach ( $client->fetch_all_documents( $index, [ 'id', 'type' ] ) as $doc ) {
 			if ( in_array( $doc['type'] ?? '', $types, true ) && ! isset( $current_ids[ $doc['id'] ] ) ) $stale[] = (string) $doc['id'];
 		}
-		foreach ( array_chunk( $stale, 1000 ) as $ids ) $client->delete( $index, ...$ids );
+		foreach ( array_chunk( $stale, 1000 ) as $ids ) {
+			$client->delete( $index, ...$ids );
+		}
 
 		return count( $posts );
 	}
@@ -80,7 +82,9 @@ final class IndexCommand {
 	 * @return int The number of documents removed.
 	 */
 	public static function purge_protected(): int {
-		if ( Settings::includes_protected_content() ) return 0;
+		if ( Settings::includes_protected_content() ) {
+			return 0;
+		}
 		$protected = get_posts( [
 			'post_type'      => array_values( get_post_types() ),
 			'post_status'    => 'any',
@@ -88,7 +92,9 @@ final class IndexCommand {
 			'posts_per_page' => -1,
 			'fields'         => 'ids',
 		] );
-		if ( ! $protected ) return 0;
+		if ( ! $protected ) {
+			return 0;
+		}
 		$protected = array_flip( array_map( 'intval', $protected ) );
 
 		$client = new MeilisearchClient( Settings::server_url(), Settings::admin_key() );
@@ -96,13 +102,19 @@ final class IndexCommand {
 		$stale  = [];
 		foreach ( $client->fetch_all_documents( $index, [ 'id' ] ) as $doc ) {
 			$id = (string) ( $doc['id'] ?? '' );
-			if ( preg_match( '/^(pdf_)?([0-9]+)$/D', $id, $m ) !== 1 ) continue;
+			if ( preg_match( '/^(pdf_)?(\d+)$/D', $id, $m ) !== 1 ) {
+				continue;
+			}
 			$post_id = (int) $m[2];
 			// A PDF is protected by its own password or by its parent's.
 			$parent = $m[1] === '' ? 0 : (int) wp_get_post_parent_id( $post_id );
-			if ( isset( $protected[ $post_id ] ) || isset( $protected[ $parent ] ) ) $stale[] = $id;
+			if ( isset( $protected[ $post_id ] ) || isset( $protected[ $parent ] ) ) {
+				$stale[] = $id;
+			}
 		}
-		foreach ( array_chunk( $stale, 1000 ) as $ids ) $client->delete( $index, ...$ids );
+		foreach ( array_chunk( $stale, 1000 ) as $ids ) {
+			$client->delete( $index, ...$ids );
+		}
 		return count( $stale );
 	}
 

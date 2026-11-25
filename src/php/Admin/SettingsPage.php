@@ -20,7 +20,9 @@ final class SettingsPage {
 	 * than at the next full reindex.
 	 */
 	public function on_settings_updated( mixed $old, mixed $new ): void {
-		if ( ! self::allows_protected( $old ) || self::allows_protected( $new ) ) return;
+		if ( ! self::allows_protected( $old ) || self::allows_protected( $new ) ) {
+			return;
+		}
 		try {
 			IndexCommand::purge_protected();
 		} catch ( \Throwable ) {
@@ -72,8 +74,11 @@ final class SettingsPage {
 		if ( isset( $input['meili_url'] ) )    $s['meili_url']    = esc_url_raw( $input['meili_url'] );
 		// Same as the admin key field: blank keeps the saved key, the checkbox
 		// clears it.
-		if ( ! empty( $input['meili_key'] ) ) $s['meili_key'] = sanitize_text_field( $input['meili_key'] );
-		elseif ( ! empty( $input['meili_key_clear'] ) ) $s['meili_key'] = '';
+		if ( ! empty( $input['meili_key'] ) ) {
+			$s['meili_key'] = sanitize_text_field( $input['meili_key'] );
+		} elseif ( ! empty( $input['meili_key_clear'] ) ) {
+			$s['meili_key'] = '';
+		}
 		if ( ! empty( $input['meili_admin_key'] ) ) $s['meili_admin_key'] = sanitize_text_field( $input['meili_admin_key'] );
 		if ( isset( $input['index_prefix'] ) )   $s['index_prefix']   = sanitize_key( $input['index_prefix'] );
 		if ( isset( $input['content_index'] ) && ( $input['content_index'] === '' || preg_match( '/^[A-Za-z0-9_-]+$/D', $input['content_index'] ) === 1 ) ) $s['content_index'] = $input['content_index'];
@@ -84,7 +89,9 @@ final class SettingsPage {
 		if ( isset( $input['meili_url'] ) )    $s['require_login'] = ! empty( $input['require_login'] );
 		if ( isset( $input['search_group'] ) && is_string( $input['search_group'] ) && preg_match( '/^[a-z0-9_-]*$/D', $input['search_group'] ) === 1 ) $s['search_group'] = $input['search_group'];
 		if ( isset( $input['meili_url'] ) ) $s['include_protected_content'] = ! empty( $input['include_protected_content'] );
-		if ( isset( $input['docai_processor_id'] ) && is_string( $input['docai_processor_id'] ) && preg_match( '/^[a-f0-9]{0,64}$/D', $input['docai_processor_id'] ) === 1 ) $s['docai_processor_id'] = $input['docai_processor_id'];
+		if ( isset( $input['docai_processor_id'] ) && is_string( $input['docai_processor_id'] ) && preg_match( '/^[a-f0-9]{0,64}$/D', $input['docai_processor_id'] ) === 1 ) {
+			$s['docai_processor_id'] = $input['docai_processor_id'];
+		}
 		return $s;
 	}
 
@@ -214,7 +221,7 @@ final class SettingsPage {
 			<p class="description"><?php esc_html_e( 'Worden direct naar Meilisearch gestuurd via de admin-sleutel.', 'avpvh-find-and-view' ); ?></p>
 			<table class="form-table" style="max-width:600px">
 				<tr>
-					<th><?php esc_html_e( 'Index', 'avpvh-find-and-view' ); ?></th>
+					<th><label for="fav-idx-name"><?php esc_html_e( 'Index', 'avpvh-find-and-view' ); ?></label></th>
 					<td><input type="text" id="fav-idx-name" value="<?php echo esc_attr( Settings::media_index() ); ?>" class="regular-text"></td>
 				</tr>
 				<tr>
@@ -226,7 +233,7 @@ final class SettingsPage {
 					</td>
 				</tr>
 				<tr>
-					<th><?php esc_html_e( 'Extra scheidingstekens', 'avpvh-find-and-view' ); ?></th>
+					<th><label for="fav-separators"><?php esc_html_e( 'Extra scheidingstekens', 'avpvh-find-and-view' ); ?></label></th>
 					<td>
 						<input type="text" id="fav-separators" class="regular-text" placeholder="/ , .">
 						<p class="description"><?php esc_html_e( 'Kommagescheiden tekens waarmee woorden worden gesplitst.', 'avpvh-find-and-view' ); ?></p>
@@ -241,11 +248,11 @@ final class SettingsPage {
 			<p class="description"><?php esc_html_e( 'Zoek een geïndexeerde pagina op tekst of plak de afbeelding-URL als anker.', 'avpvh-find-and-view' ); ?></p>
 			<table class="form-table" style="max-width:600px">
 				<tr>
-					<th><?php esc_html_e( 'Index', 'avpvh-find-and-view' ); ?></th>
+					<th><label for="fav-doc-idx"><?php esc_html_e( 'Index', 'avpvh-find-and-view' ); ?></label></th>
 					<td><input type="text" id="fav-doc-idx" value="<?php echo esc_attr( Settings::media_index() ); ?>" class="regular-text"></td>
 				</tr>
 				<tr>
-					<th><?php esc_html_e( 'Zoek document', 'avpvh-find-and-view' ); ?></th>
+					<th><label for="fav-doc-q"><?php esc_html_e( 'Zoek document', 'avpvh-find-and-view' ); ?></label></th>
 					<td>
 						<input type="text" id="fav-doc-q" class="regular-text" placeholder="<?php esc_attr_e( 'Tekst, document-ID of afbeelding-URL', 'avpvh-find-and-view' ); ?>">
 						<button id="fav-doc-search" class="button"><?php esc_html_e( 'Zoeken', 'avpvh-find-and-view' ); ?></button>

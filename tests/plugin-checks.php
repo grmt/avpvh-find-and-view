@@ -93,7 +93,9 @@ namespace {
 			return ['taskUid' => 1];
 		}
 		public function getDocuments( object $query ): object {
-			if ( $GLOBALS['meili_down'] ?? false ) throw new RuntimeException( 'Meilisearch unreachable' );
+			if ( $GLOBALS['meili_down'] ?? false ) {
+				throw new RuntimeException( 'Meilisearch unreachable' );
+			}
 			$all = array_values( $this->docs );
 			// Only the scoped filter is modelled: type = scan AND collection = "…".
 			if ( preg_match( '/^type = scan AND collection = "((?:[^"\\\\]|\\\\.)*)"$/', $query->filter[0] ?? '', $m ) === 1 ) {
@@ -176,7 +178,7 @@ namespace {
 		return array_values( array_filter( $GLOBALS['posts'], static fn( WP_Post $p ): bool => $p->post_status === 'publish' && ( ( $args['has_password'] ?? null ) === null || $p->post_password === '' ) ) );
 	}
 	function get_post( int $id ): ?WP_Post { return $GLOBALS['posts'][$id] ?? null; }
-	function get_post_types(): array { return ['post' => 'post', 'page' => 'page', 'attachment' => 'attachment']; }
+	function get_post_types( mixed ...$args ): array { return ['post' => 'post', 'page' => 'page', 'attachment' => 'attachment']; }
 	function wp_get_post_parent_id( int $id ): int|false { return $GLOBALS['parents'][$id] ?? false; }
 	function wp_next_scheduled( string $hook ): int|false { return $GLOBALS['scheduled'][$hook] ?? false; }
 	function wp_schedule_single_event( int $time, string $hook, array $args = [] ): bool { $GLOBALS['scheduled'][$hook] = $time; return true; }
@@ -358,18 +360,18 @@ namespace {
 		$parents = [15 => 5, 16 => 6];
 		$content->docs = ['5' => ['id' => '5'], 'pdf_15' => ['id' => 'pdf_15'], '6' => ['id' => '6'], 'pdf_16' => ['id' => 'pdf_16'], 'ecli_x' => ['id' => 'ecli_x']];
 		$allowed = ['search_group' => 'boek', 'include_protected_content' => true];
-		$options['search_group'] = 'boek'; $options['include_protected_content'] = true;
+		$options = array_replace( $options, ['search_group' => 'boek', 'include_protected_content' => true] );
 		( new SettingsPage() )->on_settings_updated( ['search_group' => 'boek', 'include_protected_content' => false], $allowed );
 		check( count( $content->docs ) === 5, 'Allowing protected content purged documents' );
-		$options['include_protected_content'] = false;
+		$options = array_replace( $options, ['include_protected_content' => false] );
 		( new SettingsPage() )->on_settings_updated( $allowed, ['search_group' => 'boek', 'include_protected_content' => false] );
 		check( array_keys( $content->docs ) === [5, 'pdf_15', 'ecli_x'], 'Disabling protected content left protected posts or PDFs indexed' );
 		$content->docs['6'] = ['id' => '6'];
-		$options['search_group'] = '';
+		$options = array_replace( $options, ['search_group' => ''] );
 		( new SettingsPage() )->on_settings_updated( $allowed, ['search_group' => '', 'include_protected_content' => true] );
 		check( ! isset( $content->docs['6'] ), 'Removing the search group left protected posts indexed' );
 		$meili_down = true; $scheduled = []; $settings_errors = [];
-		$options['search_group'] = 'boek';
+		$options = array_replace( $options, ['search_group' => 'boek'] );
 		( new SettingsPage() )->on_settings_updated( $allowed, ['search_group' => 'boek', 'include_protected_content' => false] );
 		check( isset( $scheduled[SyncQueue::PURGE_ACTION] ) && $settings_errors === ['fav_purge_retry'], 'Failed purge was not retried or reported' );
 		$scheduled = [];
@@ -439,9 +441,9 @@ namespace {
 			check( ! str_contains( json_encode( $instances ), 'admin-secret' ), 'Private shortcode leaked admin key' );
 		}
 		// Login-only search works without a page key.
-		$options['meili_key'] = '';
+		$options = array_replace( $options, ['meili_key' => ''] );
 		check( ! str_contains( ( new EcliShortcode() )->render( [] ), 'niet geconfigureerd' ), 'Private search required the page search key' );
-		$options['meili_key'] = 'search-secret';
+		$options = array_replace( $options, ['meili_key' => 'search-secret'] );
 		$config = ( new ReflectionProperty( FindAndViewShortcode::class, 'instances' ) )->getValue()[0];
 		check( $config['editNonce'] === '' && $config['canEdit'] === false, 'Read-only reader received edit credentials' );
 		check( $config['searchProxy']['indexes'] === ['fav_content'], 'Hidden media included in search scope' );

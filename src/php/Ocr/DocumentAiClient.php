@@ -39,7 +39,9 @@ final class DocumentAiClient {
 	 */
 	private static function endpoint(): string|\WP_Error {
 		$key = self::service_account_key();
-		if ( is_wp_error( $key ) ) return $key;
+		if ( is_wp_error( $key ) ) {
+			return $key;
+		}
 		$project   = self::project_id( $key['project_id'] );
 		$location  = self::location();
 		$processor = self::processor_id();
@@ -98,7 +100,9 @@ final class DocumentAiClient {
 	/** Calls Document AI's process endpoint and returns the decoded `document` object. */
 	private static function process_document( string $image_bytes, string $mime_type ): array|\WP_Error {
 		$url = self::endpoint();
-		if ( is_wp_error( $url ) ) return $url;
+		if ( is_wp_error( $url ) ) {
+			return $url;
+		}
 		$token = self::access_token();
 		if ( is_wp_error( $token ) ) return $token;
 
@@ -144,7 +148,9 @@ final class DocumentAiClient {
 		if ( is_string( $cached ) && $cached !== '' ) return $cached;
 
 		$key = self::service_account_key();
-		if ( is_wp_error( $key ) ) return $key;
+		if ( is_wp_error( $key ) ) {
+			return $key;
+		}
 
 		$now = time();
 		$header = self::base64url( wp_json_encode( [ 'alg' => 'RS256', 'typ' => 'JWT' ] ) );
