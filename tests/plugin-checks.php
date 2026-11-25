@@ -294,6 +294,9 @@ namespace {
 			check( $args['redirection'] === 0, 'Credential request follows redirects' );
 		}
 		check( ( new SettingsPage() )->sanitize( ['meili_admin_key' => ''] )['meili_admin_key'] === 'admin-secret', 'Blank secret erased saved key' );
+		check( ( new SettingsPage() )->sanitize( ['docai_processor_id' => 'abc123def456'] )['docai_processor_id'] === 'abc123def456', 'Processor ID not saved' );
+		check( ( new SettingsPage() )->sanitize( ['docai_processor_id' => '../x?y'] )['docai_processor_id'] === '', 'Invalid processor ID accepted' );
+		check( is_wp_error( $docai = \Avpvh\FindAndView\Ocr\DocumentAiClient::ocr_image( 'x', 'image/png' ) ) && in_array( $docai->code, ['no_key', 'docai_not_configured'], true ), 'Unconfigured OCR did not fail cleanly' );
 
 		$post = new WP_Post();
 		$post->post_password = '0';

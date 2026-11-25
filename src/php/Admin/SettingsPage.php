@@ -57,6 +57,7 @@ final class SettingsPage {
 		if ( isset( $input['meili_url'] ) )    $s['require_login'] = ! empty( $input['require_login'] );
 		if ( isset( $input['search_group'] ) && is_string( $input['search_group'] ) && preg_match( '/^[a-z0-9_-]*$/D', $input['search_group'] ) === 1 ) $s['search_group'] = $input['search_group'];
 		if ( isset( $input['meili_url'] ) ) $s['include_protected_content'] = ! empty( $input['include_protected_content'] );
+		if ( isset( $input['docai_processor_id'] ) && is_string( $input['docai_processor_id'] ) && preg_match( '/^[a-f0-9]{0,64}$/D', $input['docai_processor_id'] ) === 1 ) $s['docai_processor_id'] = $input['docai_processor_id'];
 		return $s;
 	}
 
@@ -147,6 +148,13 @@ final class SettingsPage {
 						</td>
 					</tr>
 					<tr>
+						<th><label for="fav-docai-processor"><?php esc_html_e( 'Document AI processor ID', 'avpvh-find-and-view' ); ?></label></th>
+						<td><input type="text" id="fav-docai-processor" name="fav_settings[docai_processor_id]"
+							value="<?php echo esc_attr( $s['docai_processor_id'] ); ?>" class="regular-text" pattern="[a-f0-9]*">
+							<p class="description"><?php esc_html_e( 'Voor "OCR opnieuw" met Google Document AI. Het project komt uit de service-account sleutel (Docker secret gcp_documentai_key).', 'avpvh-find-and-view' ); ?></p>
+						</td>
+					</tr>
+					<tr>
 						<th><?php esc_html_e( 'Storage backends', 'avpvh-find-and-view' ); ?></th>
 						<td>
 							<?php foreach ( [ 'local' => 'WP uploads', 'drive' => 'Google Drive', 's3' => 'S3', 'fileshare' => 'File share' ] as $id => $label ): ?>
@@ -176,7 +184,7 @@ final class SettingsPage {
 			<table class="form-table" style="max-width:600px">
 				<tr>
 					<th><?php esc_html_e( 'Index', 'avpvh-find-and-view' ); ?></th>
-					<td><input type="text" id="fav-idx-name" value="<?php echo esc_attr( ( $s['index_prefix'] ?? 'fav' ) . '_media' ); ?>" class="regular-text"></td>
+					<td><input type="text" id="fav-idx-name" value="<?php echo esc_attr( Settings::media_index() ); ?>" class="regular-text"></td>
 				</tr>
 				<tr>
 					<th><?php esc_html_e( 'Typofout-tolerantie', 'avpvh-find-and-view' ); ?></th>
@@ -203,7 +211,7 @@ final class SettingsPage {
 			<table class="form-table" style="max-width:600px">
 				<tr>
 					<th><?php esc_html_e( 'Index', 'avpvh-find-and-view' ); ?></th>
-					<td><input type="text" id="fav-doc-idx" value="<?php echo esc_attr( ( $s['index_prefix'] ?? 'fav' ) . '_media' ); ?>" class="regular-text"></td>
+					<td><input type="text" id="fav-doc-idx" value="<?php echo esc_attr( Settings::media_index() ); ?>" class="regular-text"></td>
 				</tr>
 				<tr>
 					<th><?php esc_html_e( 'Zoek document', 'avpvh-find-and-view' ); ?></th>

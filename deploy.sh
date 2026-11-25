@@ -1,37 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Server login: $AVPVH_DEPLOY_HOST, or a line AVPVH_DEPLOY_HOST=<user>@<server>
-# in deploy.local.env next to this script (ignored by Git).
-DEPLOY_HOST="${AVPVH_DEPLOY_HOST:-}"
+# Deploy settings come from the environment or from deploy.local.env next to
+# this script (ignored by Git; see deploy.local.env.example):
+#   AVPVH_DEPLOY_HOST   ssh login, <user>@<server>
+#   AVPVH_DEPLOY_PATH   plugin folder on the server; {site} is replaced by
+#                       the site name
+#   AVPVH_DEPLOY_SITES  sites deployed when none are named
+#   AVPVH_DEPLOY_EXTRA  other sites that may be named explicitly
 deploy_env="$(dirname "$0")/deploy.local.env"
-if [ -z "$DEPLOY_HOST" ] && [ -f "$deploy_env" ]; then
-    DEPLOY_HOST=$(sed -n 's/^AVPVH_DEPLOY_HOST=//p' "$deploy_env")
-fi
-if [ -z "$DEPLOY_HOST" ]; then
-    echo "Set AVPVH_DEPLOY_HOST or put AVPVH_DEPLOY_HOST=<user>@<server> in deploy.local.env." >&2
-    exit 1
+deploy_setting() {
+	local name="$1" value="${!1:-}"
+	if [ -z "$value" ] && [ -f "$deploy_env" ]; then
+		value=$(sed -n "s/^${name}=//p" "$deploy_env" | head -1)
+		value="${value%\"}"; value="${value#\"}"
+	fi
+	printf '%s' "$value"
+}
+DEPLOY_HOST=$(deploy_setting AVPVH_DEPLOY_HOST)
+DEPLOY_PATH=$(deploy_setting AVPVH_DEPLOY_PATH)
+read -r -a default_sites <<< "$(deploy_setting AVPVH_DEPLOY_SITES)"
+read -r -a extra_sites <<< "$(deploy_setting AVPVH_DEPLOY_EXTRA)"
+if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_PATH" ] || (( ${#default_sites[@]} == 0 )); then
+	echo "Set AVPVH_DEPLOY_HOST, AVPVH_DEPLOY_PATH and AVPVH_DEPLOY_SITES (see deploy.local.env.example)." >&2
+	exit 1
 fi
 
 PHP_FILE="avpvh-find-and-view.php"
 PKG_FILE="package.json"
 
-# Deploy all regular sites by default, or only the explicitly named sites.
-# Example: ./deploy.sh staging
+# Deploy the default sites, or only the sites named on the command line.
+# Example: ./deploy.sh mysite
 if (( $# )); then
 	sites=( "$@" )
 else
-	sites=( site1 site2 site3 )
+	sites=( "${default_sites[@]}" )
 fi
 
 for site in "${sites[@]}"; do
-	case "$site" in
-		site1|site2|site3|staging) ;;
-		*)
-			echo "Unknown deploy target: ${site}" >&2
-			exit 2
-			;;
-	esac
+	if [[ ! "$site" =~ ^[a-z0-9_-]+$ ]] || [[ " ${default_sites[*]} ${extra_sites[*]} " != *" $site "* ]]; then
+		echo "Unknown deploy target: ${site}" >&2
+		exit 2
+	fi
 done
 
 # 1. Read and bump micro version
@@ -80,7 +90,8 @@ trap 'composer install' EXIT
 # keep that owner distinct from php-fpm; uploads/scans remain writable.
 rsync_opts=(-rltv --omit-dir-times --no-owner --no-group --no-perms --chmod=D775,F664)
 for site in "${sites[@]}"; do
-	dest="${DEPLOY_HOST}:/srv/wordpress/wp-content-${site}/plugins/avpvh-find-and-view/"
+	dest="${DEPLOY_HOST}:${DEPLOY_PATH//\{site\}/$site}"
+	dest="${dest%/}/"
 
 	rsync "${rsync_opts[@]}" avpvh-find-and-view.php readme.txt "$dest"
 	rsync "${rsync_opts[@]}" dist/ "${dest}dist/"

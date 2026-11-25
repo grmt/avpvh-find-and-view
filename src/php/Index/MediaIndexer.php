@@ -42,7 +42,7 @@ final class MediaIndexer {
 	/**
 	 * Build an IndexItem for a scanned document page.
 	 *
-	 * page_label must match the txt/png filename stem produced by scan_pipeline.py (e.g. "page_01" or
+	 * page_label must match the txt/png filename stem produced by the scan pipeline (e.g. "page_01" or
 	 * "page_001" — padding depends on total page count, so pass it from the actual filename).
 	 *
 	 * @param array{

@@ -1066,7 +1066,7 @@ final class TreeController {
 		$client = new \Meilisearch\Client( $meili_url, $key );
 		$index_name = $type === 'content'
 			? Settings::content_index()
-			: ( $s['index_prefix'] ?? 'fav' ) . '_media';
+			: Settings::media_index();
 		if ( ! Settings::valid_index( $index_name ) ) return new \WP_Error( 'invalid_index', 'Invalid site index', [ 'status' => 400 ] );
 		return [ $client, $client->index( $index_name ), $meili_url, $s ];
 	}
@@ -1153,7 +1153,7 @@ final class TreeController {
 
 	/**
 	 * Page images aren't always PNG (Document AI/pdftoppm output is, but
-	 * plain photo scans like photo scans are JPG). Detect whichever
+	 * plain photo scans are often JPG). Detect whichever
 	 * extension actually exists next to the page's text file instead of
 	 * assuming PNG and producing a 404'ing url/thumb_url. Returns null when
 	 * no image exists at all (e.g. a born-digital .md transcript with no
@@ -1171,7 +1171,7 @@ final class TreeController {
 	/**
 	 * Returns a match key: [text_skeleton, [int, int, ...]]
 	 * e.g. "Archive-Box-03b" → ["archive-box-b", [3]]
-	 *      "Letters-01-05" → ["letters--",   [1, 5]]
+	 *      "Letters-01-05"   → ["letters--",     [1, 5]]
 	 */
 	private static function collection_signature( string $col ): array {
 		$leaf    = strtolower( basename( $col ) );

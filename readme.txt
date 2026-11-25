@@ -24,6 +24,13 @@ cropped region (Document AI, Tesseract or a local Docker engine).
 1. Copy the plugin to `wp-content/plugins/avpvh-find-and-view/`, including `vendor/`.
 2. Activate it and fill in the Meilisearch URL and keys under Settings → Find and View.
 3. Index the content with `wp fav index`.
+4. Optional, for Document AI OCR: mount a Google service-account key as the
+   Docker secret `gcp_documentai_key` and enter the processor ID in the
+   settings. `AVPVH_FAV_DOCAI_PROJECT_ID`, `AVPVH_FAV_DOCAI_PROCESSOR_ID` and
+   `AVPVH_FAV_DOCAI_LOCATION` in `wp-config.php` override them.
+
+To deploy with `deploy.sh`, copy `deploy.local.env.example` to
+`deploy.local.env` and fill in the server login, path and sites.
 
 == Changelog ==
 

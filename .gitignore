@@ -9,6 +9,7 @@ dist/class-*.php
 
 # Local settings, e.g. deploy.local.env with the server login
 *.local.*
+!deploy.local.env.example
 
 # Internal notes kept out of Git: TODO.local.md (via *.local.*) and agent memory
 memory/

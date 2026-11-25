@@ -6,20 +6,23 @@ namespace Avpvh\FindAndView\Ocr;
  * Calls Google Cloud Document AI's REST API directly (no Google Cloud PHP
  * SDK dependency) using a service-account JSON key, authenticated via the
  * standard OAuth2 JWT-bearer flow signed with PHP's own openssl extension.
- * Mirrors scan_pipeline.py's OCR config (same project/processor/scopes) so a
- * page re-OCR'd here matches what the original scan pipeline would produce.
+ * Use the same processor as the pipeline that produced the scans, so a page
+ * re-OCR'd here matches the original output.
+ *
+ * Configuration: the project comes from the service-account key, the
+ * processor ID from the settings page. AVPVH_FAV_DOCAI_PROJECT_ID,
+ * AVPVH_FAV_DOCAI_PROCESSOR_ID and AVPVH_FAV_DOCAI_LOCATION (default "eu")
+ * in wp-config.php override them.
  */
 final class DocumentAiClient {
-	private const PROJECT_ID   = 'your-gcp-project-id';
 	private const LOCATION     = 'eu';
-	private const PROCESSOR_ID = '0000000000000000';
 	private const SCOPE        = 'https://www.googleapis.com/auth/cloud-platform';
 	private const TOKEN_URL    = 'https://oauth2.googleapis.com/token';
 	private const KEY_FILE     = '/run/secrets/gcp_documentai_key';
 	private const TRANSIENT    = 'avpvh_fav_docai_token';
 
-	private static function project_id(): string {
-		return defined( 'AVPVH_FAV_DOCAI_PROJECT_ID' ) ? (string) AVPVH_FAV_DOCAI_PROJECT_ID : self::PROJECT_ID;
+	private static function project_id( string $from_key ): string {
+		return defined( 'AVPVH_FAV_DOCAI_PROJECT_ID' ) ? (string) AVPVH_FAV_DOCAI_PROJECT_ID : $from_key;
 	}
 
 	private static function location(): string {
@@ -27,7 +30,25 @@ final class DocumentAiClient {
 	}
 
 	private static function processor_id(): string {
-		return defined( 'AVPVH_FAV_DOCAI_PROCESSOR_ID' ) ? (string) AVPVH_FAV_DOCAI_PROCESSOR_ID : self::PROCESSOR_ID;
+		return defined( 'AVPVH_FAV_DOCAI_PROCESSOR_ID' ) ? (string) AVPVH_FAV_DOCAI_PROCESSOR_ID : (string) \Avpvh\FindAndView\Settings::get()['docai_processor_id'];
+	}
+
+	/**
+	 * The processor endpoint, or an error when OCR is not configured. Every
+	 * part is checked, since the access token is sent to this URL.
+	 */
+	private static function endpoint(): string|\WP_Error {
+		$key = self::service_account_key();
+		if ( is_wp_error( $key ) ) return $key;
+		$project   = self::project_id( $key['project_id'] );
+		$location  = self::location();
+		$processor = self::processor_id();
+		if ( preg_match( '/^[a-z][a-z0-9-]{4,61}[a-z0-9]$/D', $project ) !== 1
+			|| preg_match( '/^[a-z0-9-]{1,32}$/D', $location ) !== 1
+			|| preg_match( '/^[a-f0-9]{8,64}$/D', $processor ) !== 1 ) {
+			return new \WP_Error( 'docai_not_configured', 'Document AI is niet geconfigureerd.', [ 'status' => 503 ] );
+		}
+		return sprintf( 'https://%s-documentai.googleapis.com/v1/projects/%s/locations/%s/processors/%s:process', $location, $project, $location, $processor );
 	}
 
 	/**
@@ -44,8 +65,7 @@ final class DocumentAiClient {
 	 * detected lines top-to-bottom, left-to-right, rather than trusting
 	 * Document AI's own text order — more reliable for a small cropped
 	 * snippet (e.g. one column of a multi-column layout, a table cell)
-	 * than the whole-page reading order. Mirrors the "smart multi-column
-	 * line sorter" from the local local_editor_server.py's crop-OCR.
+	 * than the whole-page reading order.
 	 */
 	public static function ocr_image_sorted( string $image_bytes, string $mime_type ): string|\WP_Error {
 		$doc = self::process_document( $image_bytes, $mime_type );
@@ -77,14 +97,10 @@ final class DocumentAiClient {
 
 	/** Calls Document AI's process endpoint and returns the decoded `document` object. */
 	private static function process_document( string $image_bytes, string $mime_type ): array|\WP_Error {
+		$url = self::endpoint();
+		if ( is_wp_error( $url ) ) return $url;
 		$token = self::access_token();
 		if ( is_wp_error( $token ) ) return $token;
-
-		$location = self::location();
-		$url = sprintf(
-			'https://%s-documentai.googleapis.com/v1/projects/%s/locations/%s/processors/%s:process',
-			rawurlencode( $location ), rawurlencode( self::project_id() ), rawurlencode( $location ), rawurlencode( self::processor_id() )
-		);
 
 		$resp = wp_remote_post( $url, [
 			'headers'     => [
@@ -175,7 +191,7 @@ final class DocumentAiClient {
 	}
 
 	/**
-	 * @return array{client_email: string, private_key: string}|\WP_Error
+	 * @return array{client_email: string, private_key: string, project_id: string}|\WP_Error
 	 */
 	private static function service_account_key(): array|\WP_Error {
 		if ( ! is_readable( self::KEY_FILE ) ) {
@@ -185,7 +201,7 @@ final class DocumentAiClient {
 		if ( ! isset( $raw['client_email'], $raw['private_key'] ) ) {
 			return new \WP_Error( 'bad_key', 'Ongeldige service-account sleutel', [ 'status' => 500 ] );
 		}
-		return [ 'client_email' => $raw['client_email'], 'private_key' => $raw['private_key'] ];
+		return [ 'client_email' => (string) $raw['client_email'], 'private_key' => (string) $raw['private_key'], 'project_id' => (string) ( $raw['project_id'] ?? '' ) ];
 	}
 
 	private static function base64url( string $data ): string {

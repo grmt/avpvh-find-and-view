@@ -6,8 +6,7 @@ import { escapeHtml, highlightHtml, safeUrl, safeLocalOcrUrl, quoteFilter } from
 
 const DIFF_TOKEN_RE = /\s+|\S+/g;
 
-// Word-level "track changes" diff, mirroring local_review_tool.py's inline diff
-// view: an LCS over whitespace/word tokens, deletions struck through,
+// Word-level "track changes" diff: an LCS over whitespace/word tokens, deletions struck through,
 // insertions highlighted, flowing as normal text.
 function diffWords(oldText: string, newText: string): string {
   const a = oldText.match(DIFF_TOKEN_RE) ?? [];
@@ -335,7 +334,7 @@ export class Lightbox {
             <select class="fav-lb-crop-engine" title="OCR-engine">
               <option value="docai">Document AI (server)</option>
               <option value="tesseract">Tesseract (server, minder nauwkeurig)</option>
-              <option value="local">Lokale Docker (Docling — zelfde als local editor)</option>
+              <option value="local">Lokale Docker (Docling)</option>
             </select>
             <input class="fav-lb-crop-local-url" type="text" style="display:none" spellcheck="false"
               title="Adres van de OCR-container die je zelf lokaal draait">
@@ -791,9 +790,8 @@ export class Lightbox {
   }
 
   // Crops the already-loaded scan image client-side and posts it directly
-  // to the same local docling-serve container the local_editor_server.py
-  // local editor already uses (POST /v1/convert/file, multipart) — the
-  // production VPS has too little CPU/RAM for a heavier, more accurate
+  // to a local docling-serve container (POST /v1/convert/file, multipart):
+  // a typical web server has too little CPU/RAM for a heavier, more accurate
   // OCR model than server-side Tesseract. Browsers exempt
   // http://localhost from the mixed-content block even on an https page,
   // so this needs no tunnel or VPN, just docling-serve actually running.
@@ -834,7 +832,7 @@ export class Lightbox {
       textEl.value = (resJson.document?.md_content || resJson.document?.text_content || '').trim();
       statusEl.textContent = '';
     } catch {
-      statusEl.textContent = `Kon docling-serve niet bereiken op ${url}. Draait de container? (Zelfde container als de local editor gebruikt.)`;
+      statusEl.textContent = `Kon docling-serve niet bereiken op ${url}. Draait de container?`;
     }
   }
 

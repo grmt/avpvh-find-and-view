@@ -5,8 +5,7 @@
     "license": "MIT",
     "authors": [
         {
-            "name": "grmt",
-            "email": "admin@example.invalid"
+            "name": "grmt"
         }
     ],
     "autoload": {

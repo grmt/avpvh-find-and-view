@@ -15,6 +15,7 @@ final class Settings {
 			'require_login' => false,
 			'search_group' => '',
 			'include_protected_content' => false,
+			'docai_processor_id' => '',
 		] );
 	}
 
