@@ -41,6 +41,7 @@ namespace {
 	use Avpvh\FindAndView\Index\XlsxIndexer;
 	use Avpvh\FindAndView\Ocr\TesseractClient;
 	use Avpvh\FindAndView\Queue\SyncHandler;
+	use Avpvh\FindAndView\Queue\SyncQueue;
 	use Avpvh\FindAndView\Settings;
 	use Avpvh\FindAndView\Shortcode\EcliShortcode;
 	use Avpvh\FindAndView\Shortcode\FindAndViewShortcode;
@@ -92,6 +93,7 @@ namespace {
 			return ['taskUid' => 1];
 		}
 		public function getDocuments( object $query ): object {
+			if ( $GLOBALS['meili_down'] ?? false ) throw new RuntimeException( 'Meilisearch unreachable' );
 			$all = array_values( $this->docs );
 			// Only the scoped filter is modelled: type = scan AND collection = "…".
 			if ( preg_match( '/^type = scan AND collection = "((?:[^"\\\\]|\\\\.)*)"$/', $query->filter[0] ?? '', $m ) === 1 ) {
@@ -167,10 +169,18 @@ namespace {
 	function wp_remote_retrieve_response_code( array $resp ): int { return $resp['code']; }
 	function get_posts( array $args ): array {
 		if ( $args['post_type'] === 'attachment' ) return $GLOBALS['attachments'][$args['post_parent']] ?? [];
+		if ( ( $args['fields'] ?? '' ) === 'ids' && ( $args['has_password'] ?? null ) === true ) {
+			return array_keys( array_filter( $GLOBALS['posts'], static fn( WP_Post $p ): bool => $p->post_password !== '' ) );
+		}
 		$GLOBALS['post_query'] = $args;
 		return array_values( array_filter( $GLOBALS['posts'], static fn( WP_Post $p ): bool => $p->post_status === 'publish' && ( ( $args['has_password'] ?? null ) === null || $p->post_password === '' ) ) );
 	}
 	function get_post( int $id ): ?WP_Post { return $GLOBALS['posts'][$id] ?? null; }
+	function get_post_types(): array { return ['post' => 'post', 'page' => 'page', 'attachment' => 'attachment']; }
+	function wp_get_post_parent_id( int $id ): int|false { return $GLOBALS['parents'][$id] ?? false; }
+	function wp_next_scheduled( string $hook ): int|false { return $GLOBALS['scheduled'][$hook] ?? false; }
+	function wp_schedule_single_event( int $time, string $hook, array $args = [] ): bool { $GLOBALS['scheduled'][$hook] = $time; return true; }
+	function add_settings_error( string $setting, string $code, string $message ): void { $GLOBALS['settings_errors'][] = $code; }
 	function strip_shortcodes( string $s ): string { return $s; }
 	function wp_strip_all_tags( string $s ): string { return strip_tags( $s ); }
 	function get_object_taxonomies( mixed ...$args ): array { return []; }
@@ -340,6 +350,41 @@ namespace {
 		IndexCommand::reindex_posts();
 		check( $content->docs === [], 'Public reindex retained protected content' );
 
+		// Switching member content off updates the index without a full reindex.
+		$saved_posts = $posts;
+		$open = new WP_Post(); $open->ID = 5;
+		$locked = new WP_Post(); $locked->ID = 6; $locked->post_password = 'secret';
+		$posts = [5 => $open, 6 => $locked];
+		$parents = [15 => 5, 16 => 6];
+		$content->docs = ['5' => ['id' => '5'], 'pdf_15' => ['id' => 'pdf_15'], '6' => ['id' => '6'], 'pdf_16' => ['id' => 'pdf_16'], 'ecli_x' => ['id' => 'ecli_x']];
+		$allowed = ['search_group' => 'boek', 'include_protected_content' => true];
+		$options['search_group'] = 'boek'; $options['include_protected_content'] = true;
+		( new SettingsPage() )->on_settings_updated( ['search_group' => 'boek', 'include_protected_content' => false], $allowed );
+		check( count( $content->docs ) === 5, 'Allowing protected content purged documents' );
+		$options['include_protected_content'] = false;
+		( new SettingsPage() )->on_settings_updated( $allowed, ['search_group' => 'boek', 'include_protected_content' => false] );
+		check( array_keys( $content->docs ) === [5, 'pdf_15', 'ecli_x'], 'Disabling protected content left protected posts or PDFs indexed' );
+		$content->docs['6'] = ['id' => '6'];
+		$options['search_group'] = '';
+		( new SettingsPage() )->on_settings_updated( $allowed, ['search_group' => '', 'include_protected_content' => true] );
+		check( ! isset( $content->docs['6'] ), 'Removing the search group left protected posts indexed' );
+		$meili_down = true; $scheduled = []; $settings_errors = [];
+		$options['search_group'] = 'boek';
+		( new SettingsPage() )->on_settings_updated( $allowed, ['search_group' => 'boek', 'include_protected_content' => false] );
+		check( isset( $scheduled[SyncQueue::PURGE_ACTION] ) && $settings_errors === ['fav_purge_retry'], 'Failed purge was not retried or reported' );
+		$scheduled = [];
+		SyncHandler::handle_purge_protected();
+		check( isset( $scheduled[SyncQueue::PURGE_ACTION] ), 'Failed background purge was not rescheduled' );
+		$meili_down = false; $options['search_group'] = '';
+		$posts = $saved_posts; $parents = [];
+		$content->docs = [];
+
+		// The key field: blank keeps the saved key, the checkbox clears it.
+		$form = new SettingsPage();
+		check( $form->sanitize( ['meili_key' => ''] )['meili_key'] === 'search-secret', 'Blank search key erased saved key' );
+		check( $form->sanitize( ['meili_key' => 'new-key'] )['meili_key'] === 'new-key', 'New search key not saved' );
+		check( $form->sanitize( ['meili_key' => '', 'meili_key_clear' => '1'] )['meili_key'] === '', 'Search key could not be cleared' );
+
 		( new SearchProxy() )->register();
 		$exempt = array_reduce( $GLOBALS['filters']['avpvh_mbrs_2fa_exempt_rest_routes'] ?? [], static fn( mixed $r, callable $f ): mixed => $f( $r ), ['/other/v1/x'] );
 		check( $exempt === ['/other/v1/x', '/avpvh-fav/v1/search'], 'Search route not exempted from the 2FA step-up, or other routes dropped' );
@@ -372,6 +417,7 @@ namespace {
 		$payload = array_merge( $scope, ['queries' => [['indexUid' => Settings::content_index(), 'q' => 'test']]] );
 		check( SearchProxy::search( new WP_REST_Request( $payload ) ) instanceof WP_REST_Response, 'Valid scoped search failed' );
 		check( end( $http )[0] === 'http://meilisearch:7700/multi-search', 'Search credentials sent to option URL' );
+		check( end( $http )[1]['headers']['Authorization'] === 'Bearer admin-secret', 'Proxy did not use the site key' );
 		$payload['queries'][0]['indexUid'] = Settings::media_index();
 		check( is_wp_error( SearchProxy::search( new WP_REST_Request( $payload ) ) ), 'Content-only scope could search media' );
 		$payload['indexes'][] = Settings::media_index();
@@ -392,6 +438,10 @@ namespace {
 			check( ! str_contains( json_encode( $instances ), 'search-secret' ), 'Private shortcode leaked static search key' );
 			check( ! str_contains( json_encode( $instances ), 'admin-secret' ), 'Private shortcode leaked admin key' );
 		}
+		// Login-only search works without a page key.
+		$options['meili_key'] = '';
+		check( ! str_contains( ( new EcliShortcode() )->render( [] ), 'niet geconfigureerd' ), 'Private search required the page search key' );
+		$options['meili_key'] = 'search-secret';
 		$config = ( new ReflectionProperty( FindAndViewShortcode::class, 'instances' ) )->getValue()[0];
 		check( $config['editNonce'] === '' && $config['canEdit'] === false, 'Read-only reader received edit credentials' );
 		check( $config['searchProxy']['indexes'] === ['fav_content'], 'Hidden media included in search scope' );

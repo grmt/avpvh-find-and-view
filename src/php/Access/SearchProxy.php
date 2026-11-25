@@ -87,7 +87,9 @@ final class SearchProxy {
 			if ( ! isset( $query['limit'] ) && ! isset( $query['hitsPerPage'] ) ) $query['limit'] = 20;
 		}
 		unset( $query );
-		$key = (string) Settings::get()['meili_key'];
+		// The proxy runs server-side, so it uses the site's own key; the page
+		// key in fav_settings is only for public search pages.
+		$key = Settings::admin_key();
 		if ( $key === '' ) return new \WP_Error( 'no_config', 'Search unavailable', [ 'status' => 503 ] );
 		$resp = wp_remote_post( Settings::server_url() . '/multi-search', [
 			'headers' => [ 'Authorization' => 'Bearer ' . $key, 'Content-Type' => 'application/json' ],

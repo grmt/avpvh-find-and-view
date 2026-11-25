@@ -2,6 +2,8 @@
 
 namespace Avpvh\FindAndView\Admin;
 
+use Avpvh\FindAndView\CLI\IndexCommand;
+use Avpvh\FindAndView\Queue\SyncQueue;
 use Avpvh\FindAndView\Settings;
 
 final class SettingsPage {
@@ -9,6 +11,28 @@ final class SettingsPage {
 		add_action( 'admin_menu', [ $this, 'add_menu' ] );
 		add_action( 'admin_init', [ $this, 'register_settings' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_tree' ] );
+		add_action( 'update_option_' . Settings::OPTION, [ $this, 'on_settings_updated' ], 10, 2 );
+	}
+
+	/**
+	 * When member content is no longer included in search (the checkbox or
+	 * the mandatory group is removed), update the index right away rather
+	 * than at the next full reindex.
+	 */
+	public function on_settings_updated( mixed $old, mixed $new ): void {
+		if ( ! self::allows_protected( $old ) || self::allows_protected( $new ) ) return;
+		try {
+			IndexCommand::purge_protected();
+		} catch ( \Throwable ) {
+			SyncQueue::schedule_purge_protected( 60 );
+			add_settings_error( Settings::OPTION, 'fav_purge_retry',
+				__( 'Beschermde inhoud kon niet direct uit de index worden gehaald; dit wordt op de achtergrond opnieuw geprobeerd.', 'avpvh-find-and-view' ) );
+		}
+	}
+
+	private static function allows_protected( mixed $s ): bool {
+		return is_array( $s ) && is_string( $s['search_group'] ?? null ) && $s['search_group'] !== ''
+			&& ! empty( $s['include_protected_content'] );
 	}
 
 	public function enqueue_tree( string $hook ): void {
@@ -46,7 +70,10 @@ final class SettingsPage {
 	public function sanitize( mixed $input ): array {
 		$s = Settings::get();
 		if ( isset( $input['meili_url'] ) )    $s['meili_url']    = esc_url_raw( $input['meili_url'] );
-		if ( isset( $input['meili_key'] ) )       $s['meili_key']       = sanitize_text_field( $input['meili_key'] );
+		// Same as the admin key field: blank keeps the saved key, the checkbox
+		// clears it.
+		if ( ! empty( $input['meili_key'] ) ) $s['meili_key'] = sanitize_text_field( $input['meili_key'] );
+		elseif ( ! empty( $input['meili_key_clear'] ) ) $s['meili_key'] = '';
 		if ( ! empty( $input['meili_admin_key'] ) ) $s['meili_admin_key'] = sanitize_text_field( $input['meili_admin_key'] );
 		if ( isset( $input['index_prefix'] ) )   $s['index_prefix']   = sanitize_key( $input['index_prefix'] );
 		if ( isset( $input['content_index'] ) && ( $input['content_index'] === '' || preg_match( '/^[A-Za-z0-9_-]+$/D', $input['content_index'] ) === 1 ) ) $s['content_index'] = $input['content_index'];
@@ -78,10 +105,14 @@ final class SettingsPage {
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Meilisearch search key', 'avpvh-find-and-view' ); ?></th>
-						<td><input type="password" name="fav_settings[meili_key]"
-							value="<?php echo esc_attr( $s['meili_key'] ); ?>" class="regular-text">
-							<p class="description"><?php esc_html_e( 'Read-only key voor de zoekpagina (publiek).', 'avpvh-find-and-view' ); ?></p>
+						<th><label for="fav-meili-key"><?php esc_html_e( 'Meilisearch search key', 'avpvh-find-and-view' ); ?></label></th>
+						<td><input type="password" id="fav-meili-key" name="fav_settings[meili_key]"
+							value="" autocomplete="new-password" class="regular-text"
+							placeholder="<?php echo esc_attr( $s['meili_key'] !== '' ? __( '(ingesteld)', 'avpvh-find-and-view' ) : '' ); ?>">
+							<?php if ( $s['meili_key'] !== '' ) : ?>
+								<label><input type="checkbox" name="fav_settings[meili_key_clear]" value="1"> <?php esc_html_e( 'Wissen', 'avpvh-find-and-view' ); ?></label>
+							<?php endif; ?>
+							<p class="description"><?php esc_html_e( 'Read-only key die publieke zoekpagina\'s in de pagina zetten. Leeg laten behoudt de huidige sleutel. Zoeken voor ingelogde gebruikers heeft deze sleutel niet nodig.', 'avpvh-find-and-view' ); ?></p>
 						</td>
 					</tr>
 					<tr>

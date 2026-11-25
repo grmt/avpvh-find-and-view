@@ -86,8 +86,8 @@ trap 'composer install' EXIT
 # 7. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/,
 # vendor/ mirrored with --delete so a dependency dropped from composer.json
 # actually disappears server-side too, not just stops being referenced.
-# Plugin source is writable only by its deployment owner. The server must
-# keep that owner distinct from php-fpm; uploads/scans remain writable.
+# Group-writable on purpose: php-fpm shares the deploy group, so WordPress
+# can update or replace the plugin like any other (see the shared CLAUDE.md).
 rsync_opts=(-rltv --omit-dir-times --no-owner --no-group --no-perms --chmod=D775,F664)
 for site in "${sites[@]}"; do
 	dest="${DEPLOY_HOST}:${DEPLOY_PATH//\{site\}/$site}"

@@ -2,6 +2,7 @@
 
 namespace Avpvh\FindAndView\Queue;
 
+use Avpvh\FindAndView\CLI\IndexCommand;
 use Avpvh\FindAndView\Index\PdfIndexer;
 use Avpvh\FindAndView\Index\PostIndexer;
 use Avpvh\FindAndView\Index\MeilisearchClient;
@@ -26,6 +27,15 @@ final class SyncHandler {
 			'pdf'   => $client->delete( $index, 'pdf_' . $id ),
 			default => $client->delete( $index, (string) $id ),
 		};
+	}
+
+	/** Keep retrying until protected content is out of the index. */
+	public static function handle_purge_protected(): void {
+		try {
+			IndexCommand::purge_protected();
+		} catch ( \Throwable ) {
+			SyncQueue::schedule_purge_protected();
+		}
 	}
 
 	private static function sync_post( int $post_id, MeilisearchClient $client ): void {

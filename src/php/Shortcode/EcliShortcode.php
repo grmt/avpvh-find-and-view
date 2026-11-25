@@ -26,7 +26,7 @@ final class EcliShortcode {
 			return $gate;
 		}
 
-		if ( empty( $s['meili_url'] ) || empty( $s['meili_key'] ) ) {
+		if ( empty( $s['meili_url'] ) || ( ! Settings::private_search() && empty( $s['meili_key'] ) ) ) {
 			return '<p>' . esc_html__( 'Meilisearch niet geconfigureerd.', 'avpvh-find-and-view' ) . '</p>';
 		}
 

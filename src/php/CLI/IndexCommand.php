@@ -72,6 +72,40 @@ final class IndexCommand {
 		return count( $posts );
 	}
 
+	/**
+	 * Remove password-protected posts and their PDFs from the content index.
+	 * Runs when member content is no longer included in search, so the index
+	 * follows the setting without a full reindex. A no-op while it is included.
+	 *
+	 * @return int The number of documents removed.
+	 */
+	public static function purge_protected(): int {
+		if ( Settings::includes_protected_content() ) return 0;
+		$protected = get_posts( [
+			'post_type'      => array_values( get_post_types() ),
+			'post_status'    => 'any',
+			'has_password'   => true,
+			'posts_per_page' => -1,
+			'fields'         => 'ids',
+		] );
+		if ( ! $protected ) return 0;
+		$protected = array_flip( array_map( 'intval', $protected ) );
+
+		$client = new MeilisearchClient( Settings::server_url(), Settings::admin_key() );
+		$index  = Settings::content_index();
+		$stale  = [];
+		foreach ( $client->fetch_all_documents( $index, [ 'id' ] ) as $doc ) {
+			$id = (string) ( $doc['id'] ?? '' );
+			if ( preg_match( '/^(pdf_)?([0-9]+)$/D', $id, $m ) !== 1 ) continue;
+			$post_id = (int) $m[2];
+			// A PDF is protected by its own password or by its parent's.
+			$parent = $m[1] === '' ? 0 : (int) wp_get_post_parent_id( $post_id );
+			if ( isset( $protected[ $post_id ] ) || isset( $protected[ $parent ] ) ) $stale[] = $id;
+		}
+		foreach ( array_chunk( $stale, 1000 ) as $ids ) $client->delete( $index, ...$ids );
+		return count( $stale );
+	}
+
 	public static function run( array $args, array $assoc ): void {
 		$s     = Settings::get();
 		$types = $assoc['post-type'] ?? implode( ',', $s['post_types'] );

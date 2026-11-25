@@ -5,6 +5,8 @@ namespace Avpvh\FindAndView\Queue;
 final class SyncQueue {
 	const SYNC_ACTION   = 'fav_queue_sync';
 	const DELETE_ACTION = 'fav_queue_delete';
+	const PURGE_ACTION  = 'fav_queue_purge_protected';
+	const PURGE_RETRY   = 600;
 	const DEBOUNCE      = 5;
 
 	// Uses WP-Cron rather than Action Scheduler: the latter is only present
@@ -25,7 +27,14 @@ final class SyncQueue {
 		wp_schedule_single_event( time(), self::DELETE_ACTION, $args );
 	}
 
+	/** Retry removing protected content later, e.g. when Meilisearch was down. */
+	public static function schedule_purge_protected( int $delay = self::PURGE_RETRY ): void {
+		if ( wp_next_scheduled( self::PURGE_ACTION ) ) return;
+		wp_schedule_single_event( time() + $delay, self::PURGE_ACTION );
+	}
+
 	public static function register_handlers(): void {
+		add_action( self::PURGE_ACTION, [ SyncHandler::class, 'handle_purge_protected' ] );
 		add_action( self::SYNC_ACTION,   [ SyncHandler::class, 'handle_sync'   ], 10, 2 );
 		add_action( self::DELETE_ACTION, [ SyncHandler::class, 'handle_delete' ], 10, 2 );
 	}
