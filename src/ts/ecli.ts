@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import '../css/ecli.css';
 import { escapeHtml, safeUrl } from './escape';
 import { searchIndex } from './meili';
@@ -54,7 +55,7 @@ function renderResults(el: HTMLElement, docs: EcliDoc[]): void {
     el.innerHTML = '<p class="fav-ecli-empty">Geen ECLI\'s gevonden.</p>';
     return;
   }
-  el.innerHTML = docs.map(d => `
+  el.innerHTML = DOMPurify.sanitize(docs.map(d => `
     <div class="fav-ecli-card">
       <div class="fav-ecli-card-header">
         <a class="fav-ecli-id" href="https://uitspraken.rechtspraak.nl/details?id=${encodeURIComponent(d.ecli)}" target="_blank" rel="noopener noreferrer">${escapeHtml(d.ecli)}</a>
@@ -64,7 +65,7 @@ function renderResults(el: HTMLElement, docs: EcliDoc[]): void {
         ${d.references.map(r => `<li><a href="${escapeHtml(refHref(r))}" target="_blank" rel="noopener noreferrer">${escapeHtml(refLabel(r))}</a></li>`).join('')}
       </ul>
     </div>
-  `).join('');
+  `).join(''), { ADD_ATTR: ['target'] });
 }
 
 function initInstance(cfg: EcliConfig): void {

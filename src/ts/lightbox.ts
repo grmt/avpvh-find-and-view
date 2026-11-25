@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import * as pdfjsLib from 'pdfjs-dist';
 import { renderMarkdown, renderPlain, looksLikeMarkdown } from './markdown';
 import type { FavConfig } from './types';
@@ -1440,11 +1441,11 @@ export class Lightbox {
       resultsEl.innerHTML = '<div class="fav-lb-search-empty">Geen resultaten.</div>';
       return;
     }
-    resultsEl.innerHTML = hits.map(h =>
+    resultsEl.innerHTML = DOMPurify.sanitize(hits.map(h =>
       `<button type="button" class="fav-lb-search-result" data-page="${escapeHtml(h.page_number)}">` +
       `<span class="fav-lb-search-result-label">Pagina ${escapeHtml(h.page_number ?? '?')}</span>` +
       `<span class="fav-lb-search-result-snippet">${highlightHtml(h._formatted?.text)}</span></button>`,
-    ).join('');
+    ).join(''));
     resultsEl.querySelectorAll<HTMLButtonElement>('.fav-lb-search-result').forEach(btn => {
       const pageNum = Number(btn.dataset['page']);
       btn.addEventListener('click', () => {
@@ -1493,7 +1494,7 @@ export class Lightbox {
     try {
       let task = this.pdfDocs.get(url);
       if (!task) {
-        task = pdfjsLib.getDocument({ url });
+        task = pdfjsLib.getDocument({ url, isEvalSupported: false });
         this.pdfDocs.set(url, task);
       }
       const doc = await task.promise;

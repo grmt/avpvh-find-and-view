@@ -83,9 +83,9 @@ npx vite build --config config/vite/tree.config.ts
 composer install --no-dev --optimize-autoloader
 trap 'composer install' EXIT
 
-# 7. Deploy via rsync — dist/ goes into dist/ on server, php into src/php/,
-# vendor/ mirrored with --delete so a dependency dropped from composer.json
-# actually disappears server-side too, not just stops being referenced.
+# 7. Deploy via rsync. dist/, src/php/, languages/ and vendor/ are mirrored
+# with --delete, so a file removed or renamed here also disappears from the
+# server instead of lingering there.
 # Group-writable on purpose: php-fpm shares the deploy group, so WordPress
 # can update or replace the plugin like any other (see the shared CLAUDE.md).
 rsync_opts=(-rltv --omit-dir-times --no-owner --no-group --no-perms --chmod=D775,F664)
@@ -94,8 +94,8 @@ for site in "${sites[@]}"; do
 	dest="${dest%/}/"
 
 	rsync "${rsync_opts[@]}" avpvh-find-and-view.php readme.txt "$dest"
-	rsync "${rsync_opts[@]}" dist/ "${dest}dist/"
-	rsync "${rsync_opts[@]}" src/php/ "${dest}src/php/"
+	rsync "${rsync_opts[@]}" --delete dist/ "${dest}dist/"
+	rsync "${rsync_opts[@]}" --delete src/php/ "${dest}src/php/"
 	rsync "${rsync_opts[@]}" --delete languages/ "${dest}languages/"
 	rsync "${rsync_opts[@]}" --delete vendor/ "${dest}vendor/"
 done

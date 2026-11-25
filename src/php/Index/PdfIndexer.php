@@ -5,6 +5,8 @@ namespace Avpvh\FindAndView\Index;
 use Avpvh\FindAndView\Settings;
 
 final class PdfIndexer {
+	private const MAX_PDF_BYTES = 52428800; // 50 MiB
+
 
 	/**
 	 * Extracted text of a born-digital PDF attached to (uploaded into) a
@@ -20,7 +22,15 @@ final class PdfIndexer {
 		if ( $attachment->post_mime_type !== 'application/pdf' ) return null;
 
 		$path = get_attached_file( $attachment->ID );
-		if ( ! $path || ! is_readable( $path ) ) return null;
+		if ( ! $path || is_link( $path ) || ! is_readable( $path ) ) {
+			return null;
+		}
+		// The parser holds the whole document in memory; very large PDFs are
+		// skipped rather than risk exhausting it.
+		$size = filesize( $path );
+		if ( $size === false || $size > self::MAX_PDF_BYTES ) {
+			return null;
+		}
 
 		try {
 			$text = ( new \Smalot\PdfParser\Parser() )->parseFile( $path )->getText();

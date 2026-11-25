@@ -20,6 +20,10 @@ final class TreeController {
 	private const RATE_LIMIT_DOCAI        = 30;
 	private const RATE_LIMIT_TESSERACT    = 60;
 	private const RATE_LIMIT_DELETE       = 30;
+	private const RATE_LIMIT_EDIT         = 120;
+	private const RATE_LIMIT_BULK         = 20;      // replace and consolidate
+	private const MAX_OCR_PIXELS          = 50000000;
+	private const IMAGE_TOO_LARGE         = 'Paginabeeld is te groot voor OCR';
 
 	public function register(): void {
 		add_action( 'rest_api_init', [ $this, 'register_routes' ] );
@@ -300,7 +304,9 @@ final class TreeController {
 		$found = null;
 		foreach ( scandir( $dir ) as $entry ) {
 			if ( preg_match( "/^page_(\\d+)\\.({$ext_pattern})$/i", $entry, $m ) !== 1 ) continue;
-			if ( (int) $m[1] !== $page_number ) continue;
+			if ( (int) $m[1] !== $page_number || is_link( $dir . '/' . $entry ) ) {
+				continue;
+			}
 			if ( $found === null || strtolower( $m[2] ) === 'md' ) $found = $dir . '/' . $entry;
 		}
 		return $found;
@@ -334,7 +340,20 @@ final class TreeController {
 			$src = "{$file}.bak" . ( $n - 1 );
 			if ( is_file( $src ) ) $this->move_path( $src, "{$file}.bak{$n}" );
 		}
+		// copy() writes through a link, so remove one in the way first.
+		if ( is_link( "{$file}.bak1" ) ) {
+			wp_delete_file( "{$file}.bak1" );
+		}
 		if ( is_file( $file ) ) copy( $file, "{$file}.bak1" );
+	}
+
+	/** Write a text file in full under an exclusive lock, never through a link. */
+	private static function write_text( string $file, string $text ): ?\WP_Error {
+		if ( is_link( $file ) || file_put_contents( $file, $text, LOCK_EX ) !== strlen( $text ) ) {
+			error_log( '[avpvh-fav] Could not write a scan text file' );
+			return new \WP_Error( 'write_failed', 'Opslaan mislukt.', [ 'status' => 500 ] );
+		}
+		return null;
 	}
 
 	/** Re-indexes one page file's current on-disk content as a single doc. */
@@ -344,8 +363,12 @@ final class TreeController {
 		[ $client, $index ] = $result;
 		$doc = self::build_source_document( new \SplFileInfo( $file ), $this->scan_root(), $this->scan_base_url() );
 		if ( $doc === null ) return null;
-		$task = $index->addDocuments( [ $doc ] );
-		$client->waitForTask( $task['taskUid'], 30000 );
+		try {
+			$task = $index->addDocuments( [ $doc ] );
+			$client->waitForTask( $task['taskUid'], 30000 );
+		} catch ( \Exception $e ) {
+			return self::meili_error( 'reindex_one_page', $e->getMessage(), 'Opgeslagen, maar herindexeren mislukt.' );
+		}
 		return null;
 	}
 
@@ -499,6 +522,10 @@ final class TreeController {
 
 		if ( trim( $text ) === '' ) return new \WP_Error( 'empty', 'Tekst mag niet leeg zijn', [ 'status' => 400 ] );
 		if ( strlen( $text ) > self::MAX_SCAN_TEXT_BYTES ) return new \WP_Error( 'too_large', 'Tekst is te groot', [ 'status' => 413 ] );
+		$rate_err = self::check_rate_limit( 'edit', self::RATE_LIMIT_EDIT );
+		if ( $rate_err !== null ) {
+			return $rate_err;
+		}
 
 		$dir = $this->resolve_collection_dir( $collection );
 		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
@@ -511,7 +538,10 @@ final class TreeController {
 		// Rotating .bak1 (latest) .. .bak3 (oldest), same convention as the
 		// local review tool, before overwriting the file.
 		$this->rotate_backups( $file );
-		file_put_contents( $file, $text );
+		$write_err = self::write_text( $file, $text );
+		if ( $write_err !== null ) {
+			return $write_err;
+		}
 
 		$err = $this->reindex_one_page( $file );
 		if ( is_wp_error( $err ) ) return $err;
@@ -559,7 +589,9 @@ final class TreeController {
 		$file = $this->resolve_page_file( $dir, $page_number, 'txt|md' );
 		if ( $file === null ) return new \WP_Error( 'no_page', 'Pagina niet gevonden', [ 'status' => 404 ] );
 		$bak = "{$file}.bak{$version}";
-		if ( ! is_file( $bak ) ) return new \WP_Error( 'no_backup', 'Geen back-up gevonden', [ 'status' => 404 ] );
+		if ( ! is_file( $bak ) || is_link( $bak ) ) {
+			return new \WP_Error( 'no_backup', 'Geen back-up gevonden', [ 'status' => 404 ] );
+		}
 
 		return new \WP_REST_Response( [
 			'old_text' => (string) file_get_contents( $bak ),
@@ -717,6 +749,10 @@ final class TreeController {
 	/** Regenerates consolidated_extracted_text.txt from every page's current text. */
 	public function consolidate_scan_collection( \WP_REST_Request $req ): \WP_REST_Response|\WP_Error {
 		$collection = (string) $req->get_param( 'collection' );
+		$rate_err = self::check_rate_limit( 'bulk', self::RATE_LIMIT_BULK );
+		if ( $rate_err !== null ) {
+			return $rate_err;
+		}
 		$dir = $this->resolve_collection_dir( $collection );
 		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
 
@@ -733,7 +769,10 @@ final class TreeController {
 		}
 		if ( ! $texts ) return new \WP_Error( 'empty', 'Geen pagina\'s in deze collectie', [ 'status' => 400 ] );
 
-		file_put_contents( "{$dir}/consolidated_extracted_text.txt", implode( "\n\n--- PAGE SEPARATOR ---\n\n", $texts ) );
+		$write_err = self::write_text( "{$dir}/consolidated_extracted_text.txt", implode( "\n\n--- PAGE SEPARATOR ---\n\n", $texts ) );
+		if ( $write_err !== null ) {
+			return $write_err;
+		}
 		self::audit_log( 'scan_consolidate', [ 'collection' => $collection, 'pages' => count( $texts ) ] );
 		return new \WP_REST_Response( [ 'ok' => true, 'pages' => count( $texts ) ] );
 	}
@@ -754,6 +793,10 @@ final class TreeController {
 		if ( $query === '' ) return new \WP_Error( 'no_query', 'Zoekterm is verplicht', [ 'status' => 400 ] );
 		if ( strlen( $query ) > self::MAX_REPLACE_QUERY_BYTES ) return new \WP_Error( 'query_too_long', 'Zoekterm is te lang', [ 'status' => 400 ] );
 		if ( strlen( $replacement ) > self::MAX_REPLACE_VALUE_BYTES ) return new \WP_Error( 'replacement_too_long', 'Vervangende tekst is te lang', [ 'status' => 400 ] );
+		$rate_err = self::check_rate_limit( 'bulk', self::RATE_LIMIT_BULK );
+		if ( $rate_err !== null ) {
+			return $rate_err;
+		}
 
 		$dir = $this->resolve_collection_dir( $collection );
 		if ( ! $dir ) return new \WP_Error( 'bad_collection', 'Onbekende collectie', [ 'status' => 404 ] );
@@ -801,7 +844,10 @@ final class TreeController {
 		$base_url      = $this->scan_base_url();
 		foreach ( $pending as $change ) {
 			$this->rotate_backups( $change['file'] );
-			file_put_contents( $change['file'], $change['text'] );
+			$write_err = self::write_text( $change['file'], $change['text'] );
+			if ( $write_err !== null ) {
+				return $write_err;
+			}
 			$doc = self::build_source_document( new \SplFileInfo( $change['file'] ), $root, $base_url );
 			if ( $doc !== null ) $docs[] = $doc;
 			$pages_changed[] = $change['entry'];
@@ -855,7 +901,7 @@ final class TreeController {
 		if ( $image === null ) return new \WP_Error( 'no_image', 'Paginabeeld niet gevonden', [ 'status' => 404 ] );
 		$size = filesize( $image );
 		if ( $size === false || $size > self::MAX_OCR_IMAGE_BYTES ) {
-			return new \WP_Error( 'image_too_large', 'Paginabeeld is te groot voor OCR', [ 'status' => 413 ] );
+			return new \WP_Error( 'image_too_large', self::IMAGE_TOO_LARGE, [ 'status' => 413 ] );
 		}
 
 		$mime = strtolower( (string) pathinfo( $image, PATHINFO_EXTENSION ) ) === 'png' ? 'image/png' : 'image/jpeg';
@@ -894,7 +940,7 @@ final class TreeController {
 		if ( $image_path === null ) return new \WP_Error( 'no_image', 'Paginabeeld niet gevonden', [ 'status' => 404 ] );
 		$size = filesize( $image_path );
 		if ( $size === false || $size > self::MAX_OCR_IMAGE_BYTES ) {
-			return new \WP_Error( 'image_too_large', 'Paginabeeld is te groot voor OCR', [ 'status' => 413 ] );
+			return new \WP_Error( 'image_too_large', self::IMAGE_TOO_LARGE, [ 'status' => 413 ] );
 		}
 
 		$x = (float) ( $crop['x'] ?? 0 );
@@ -904,14 +950,25 @@ final class TreeController {
 		if ( ! is_finite( $x ) || ! is_finite( $y ) || ! is_finite( $w ) || ! is_finite( $h ) || $w <= 0 || $h <= 0 ) {
 			return new \WP_Error( 'bad_crop', 'Ongeldige selectie', [ 'status' => 400 ] );
 		}
+		// Fractions of the image: keep the selection inside it.
+		$x = min( 1.0, max( 0.0, $x ) );
+		$y = min( 1.0, max( 0.0, $y ) );
+		$w = min( 1.0 - $x, $w );
+		$h = min( 1.0 - $y, $h );
+
+		// Decoding needs about 4 bytes per pixel, whatever the file size.
+		$dims = @getimagesize( $image_path );
+		if ( ! $dims || $dims[0] * $dims[1] > self::MAX_OCR_PIXELS ) {
+			return new \WP_Error( 'image_too_large', self::IMAGE_TOO_LARGE, [ 'status' => 413 ] );
+		}
 
 		$src = @imagecreatefromstring( (string) file_get_contents( $image_path ) );
 		if ( ! $src ) return new \WP_Error( 'bad_image', 'Kon paginabeeld niet lezen', [ 'status' => 500 ] );
 
 		$img_w = imagesx( $src );
 		$img_h = imagesy( $src );
-		$x1 = (int) max( 0, $x * $img_w );
-		$y1 = (int) max( 0, $y * $img_h );
+		$x1 = (int) ( $x * $img_w );
+		$y1 = (int) ( $y * $img_h );
 		$x2 = (int) min( $img_w, ( $x + $w ) * $img_w );
 		$y2 = (int) min( $img_h, ( $y + $h ) * $img_h );
 		$crop_w = $x2 - $x1;

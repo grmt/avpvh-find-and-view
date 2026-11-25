@@ -482,6 +482,30 @@ namespace {
 		$complex = $tree->replace_scan_collection( new WP_REST_Request( ['collection' => 'col1', 'query' => '(?:a|aa)+b', 'replacement' => 'x', 'regex' => true] ) );
 		check( is_wp_error( $complex ) && $complex->code === 'regex_limit', 'Complex regex did not stop at backtrack limit' );
 
+		// Links inside a collection are never followed when writing.
+		file_put_contents( "$tmp/outside/target.txt", 'outside original' );
+		symlink( "$tmp/outside/target.txt", "$tmp/scans/col1/page_03.txt" );
+		check( is_wp_error( $tree->edit_scan_page( new WP_REST_Request( ['collection' => 'col1', 'page_number' => 3, 'text' => 'overwrite'] ) ) ), 'Edit followed a linked page file' );
+		unlink( "$tmp/scans/col1/page_03.txt" );
+		symlink( "$tmp/outside/target.txt", "$tmp/scans/col1/page_02.txt.bak1" );
+		check( $tree->edit_scan_page( new WP_REST_Request( ['collection' => 'col1', 'page_number' => 2, 'text' => 'Second edited text'] ) ) instanceof WP_REST_Response, 'Edit with a linked backup failed' );
+		check( file_get_contents( "$tmp/outside/target.txt" ) === 'outside original' && ! is_link( "$tmp/scans/col1/page_02.txt.bak1" ), 'Backup rotation wrote through a link' );
+		symlink( "$tmp/outside/target.txt", "$tmp/scans/col1/page_02.txt.bak3" );
+		check( is_wp_error( $tree->scan_diff( new WP_REST_Request( ['collection' => 'col1', 'page_number' => 2, 'version' => 3] ) ) ), 'Diff read a linked backup' );
+		unlink( "$tmp/scans/col1/page_02.txt.bak3" );
+		file_put_contents( "$tmp/scans/col1/page_01.png", 'image' );
+		symlink( "$tmp/outside/target.txt", "$tmp/scans/col1/consolidated_extracted_text.txt" );
+		$consolidated = $tree->consolidate_scan_collection( new WP_REST_Request( ['collection' => 'col1'] ) );
+		check( is_wp_error( $consolidated ) && $consolidated->code === 'write_failed' && file_get_contents( "$tmp/outside/target.txt" ) === 'outside original', 'Consolidation wrote through a link' );
+		unlink( "$tmp/scans/col1/consolidated_extracted_text.txt" );
+
+		// Bulk operations share one per-user limit.
+		$transients = [];
+		for ( $i = 0; $i < 20; $i++ ) $tree->consolidate_scan_collection( new WP_REST_Request( ['collection' => 'col1'] ) );
+		$bulk = $tree->replace_scan_collection( new WP_REST_Request( ['collection' => 'col1', 'query' => 'nothing-matches'] ) );
+		check( is_wp_error( $bulk ) && $bulk->code === 'rate_limited', 'Bulk rate limit did not enforce cap' );
+		$transients = [];
+
 		// OCR engine validation, rate limiting, redirection=0, generic upstream errors.
 		file_put_contents( "$tmp/scans/col1/page_01.png", base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' ) );
 		check( is_wp_error( $tree->ocr_scan_page( new WP_REST_Request( ['collection' => 'col1', 'page_number' => 1, 'engine' => 'invalid'] ) ) ), 'Invalid OCR engine accepted' );
