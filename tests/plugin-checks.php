@@ -48,6 +48,10 @@ namespace {
 	use Avpvh\FindAndView\Storage\LocalProvider;
 	use Avpvh\FindAndView\Storage\StorageLocation;
 
+	// The stubs below read these through $GLOBALS. Declared global so the checks
+	// also work when PHPUnit includes this file from inside a test method.
+	global $actions, $attachment_file, $attachments, $audit_events, $checks, $filters, $http, $http_response, $is_admin, $logged_in, $meili_down, $member_status, $nocache, $options, $parents, $post_query, $posts, $queried_post, $scheduled, $settings_errors, $tmp, $transients;
+
 	class WP_Error {
 		public function __construct( public string $code, public string $message, public array $data = [] ) {}
 		public function get_error_message(): string { return $this->message; }
@@ -489,7 +493,8 @@ namespace {
 		symlink( "$tmp/outside/target.txt", "$tmp/scans/col1/page_03.txt" );
 		check( is_wp_error( $tree->edit_scan_page( new WP_REST_Request( ['collection' => 'col1', 'page_number' => 3, 'text' => 'overwrite'] ) ) ), 'Edit followed a linked page file' );
 		unlink( "$tmp/scans/col1/page_03.txt" );
-		symlink( "$tmp/outside/target.txt", "$tmp/scans/col1/page_02.txt.bak1" );
+		if ( file_exists( "$tmp/scans/col1/page_02.txt.bak1" ) ) unlink( "$tmp/scans/col1/page_02.txt.bak1" );
+		check( symlink( "$tmp/outside/target.txt", "$tmp/scans/col1/page_02.txt.bak1" ), 'Could not set up the linked backup' );
 		check( $tree->edit_scan_page( new WP_REST_Request( ['collection' => 'col1', 'page_number' => 2, 'text' => 'Second edited text'] ) ) instanceof WP_REST_Response, 'Edit with a linked backup failed' );
 		check( file_get_contents( "$tmp/outside/target.txt" ) === 'outside original' && ! is_link( "$tmp/scans/col1/page_02.txt.bak1" ), 'Backup rotation wrote through a link' );
 		symlink( "$tmp/outside/target.txt", "$tmp/scans/col1/page_02.txt.bak3" );
@@ -570,13 +575,18 @@ namespace {
 		check( ! file_exists( "$tmp/fav/album/sub/photo.txt" ), 'LocalProvider valid delete failed' );
 
 		// Exercise actual late rendering, with PHP's real headers_sent() state.
+		// Under PHPUnit (tests/Unit) the output stays in its buffer, so this
+		// part only runs when the file is run on its own, as CI's Tests job does.
 		echo 'PASS: ';
-		check( headers_sent(), 'Late-render test did not send output' );
-		$before = $nocache;
-		Settings::login_gate();
-		( new FindAndViewShortcode() )->render( [] );
-		( new EcliShortcode() )->render( [] );
-		check( $nocache === $before && DONOTCACHEPAGE, 'Late shortcode rendering tried to send HTTP headers' );
+		$under_phpunit = class_exists( \PHPUnit\Framework\TestCase::class, false );
+		check( headers_sent() || $under_phpunit, 'Late-render test did not send output' );
+		if ( headers_sent() ) {
+			$before = $nocache;
+			Settings::login_gate();
+			( new FindAndViewShortcode() )->render( [] );
+			( new EcliShortcode() )->render( [] );
+			check( $nocache === $before && DONOTCACHEPAGE, 'Late shortcode rendering tried to send HTTP headers' );
+		}
 		echo "$checks regression checks\n";
 	} finally {
 		remove_fixture( $tmp );
