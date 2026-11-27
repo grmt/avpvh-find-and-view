@@ -29,6 +29,7 @@ const responses: Record<string, unknown> = {
   'tree/move': { ok: true },
   'tree/doc-search': [],
 };
+const failing = new Set<string>();
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const label = (name: string) =>
@@ -50,6 +51,7 @@ beforeAll(async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     const endpoint = url.replace('/wp-json/fav/v1/', '');
     calls.push({ endpoint, init });
+    if (failing.has(endpoint)) return new Response('kapot', { status: 500 });
     return new Response(JSON.stringify(responses[endpoint] ?? {}), { status: 200 });
   }));
   vi.stubGlobal('alert', vi.fn());
@@ -61,6 +63,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   calls.length = 0;
+  failing.clear();
 });
 
 describe('admin tree page', () => {
@@ -77,6 +80,26 @@ describe('admin tree page', () => {
     expect(calls[0]!.endpoint).toBe('tree/index-stats');
     expect(headers.get('X-WP-Nonce')).toBe('nonce-1');
     expect(headers.get('Content-Type')).toBe('application/json');
+  });
+
+  it('shows the server error when a request fails', async () => {
+    failing.add('tree/index-stats');
+    document.getElementById('fav-stats-refresh')!.click();
+    await flush();
+
+    expect(document.getElementById('fav-index-stats')!.textContent).toBe('Fout: Error: kapot');
+  });
+
+  it('keeps the selection when a selected item is dragged', () => {
+    const cb = nodeOf('a').querySelector<HTMLInputElement>('.fav-tree-cb')!;
+    cb.checked = true;
+    cb.dispatchEvent(new Event('change'));
+
+    dragStart(nodeOf('a'));
+
+    expect(nodeOf('a').classList.contains('fav-selected')).toBe(true);
+    cb.dispatchEvent(new Event('change'));
+    expect(document.querySelectorAll('.fav-selected')).toHaveLength(0);
   });
 
   it('drops the selection when an unselected item is dragged', () => {
@@ -105,6 +128,27 @@ describe('admin tree page', () => {
 
     expect(calls.map(c => c.endpoint)).toEqual(['tree/move', 'tree']);
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ from: 'b', to: 'c' });
+  });
+
+  it('cancels a rename on Escape and ignores other keys', async () => {
+    label('a').dispatchEvent(new MouseEvent('dblclick'));
+    const input = document.querySelector<HTMLInputElement>('.fav-tree-rename')!;
+    input.value = 'x';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    expect(input.isConnected).toBe(true);
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await flush();
+
+    expect(input.isConnected).toBe(false);
+    expect(label('a')).toBeDefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('only searches documents on Enter', async () => {
+    document.getElementById('fav-doc-q')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'z' }));
+    await flush();
+    expect(calls).toHaveLength(0);
   });
 
   it('searches documents on Enter', async () => {
