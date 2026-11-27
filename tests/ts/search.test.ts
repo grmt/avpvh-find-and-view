@@ -107,6 +107,7 @@ const contentDocs = [
   { id: 'b4', title: 'Geen url', url: '', type: 'page' },
 ];
 let lightboxHits: MeiliHit[] = [];
+let extraMediaHits: MeiliHit[] = [];
 let facetsResponse: unknown = { 'boeken/deel1': 2, 'boeken/deel2': 1, losse: 3 };
 let contentDocsResponse: unknown[] = contentDocs;
 let failProxy = false;
@@ -126,7 +127,7 @@ function answer(query: Query): Record<string, unknown> {
       : lightboxHits;
     return { ...base, hits };
   }
-  const hits = query.q ? (query.indexUid === 'media' ? mediaHits : contentHits) : [];
+  const hits = query.q ? (query.indexUid === 'media' ? [...mediaHits, ...extraMediaHits] : contentHits) : [];
   return {
     ...base,
     hits,
@@ -140,8 +141,8 @@ function answer(query: Query): Record<string, unknown> {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-async function start(config: FavConfig) {
-  document.body.innerHTML = markup;
+async function start(config: FavConfig, html = markup) {
+  document.body.innerHTML = html;
   window.favInstances = [config, cfg({ uid: 'missing' })];
   vi.resetModules();
   await import('../../src/ts/search');
@@ -191,6 +192,7 @@ beforeEach(() => {
   lightbox.open.mockReset();
   lightbox.close.mockReset();
   lightboxHits = [];
+  extraMediaHits = [];
   facetsResponse = { 'boeken/deel1': 2, 'boeken/deel2': 1, losse: 3 };
   contentDocsResponse = contentDocs;
   failProxy = false;
@@ -614,5 +616,112 @@ describe('media lightbox', () => {
     link.click();
     await waitFor(() => lightbox.open.mock.calls.length === 2);
     expect(lightbox.open.mock.calls[1]![0].every((i: { isMatch: boolean }) => !i.isMatch)).toBe(true);
+  });
+});
+
+describe('less common data', () => {
+  it('shows a media hit without text or snippet', async () => {
+    extraMediaHits = [hit({ id: 'leeg', collection: 'losse', text: undefined as unknown as string })];
+    await start(cfg());
+    await type('brief');
+    await waitFor(() => byId('hits-media').querySelectorAll('.ais-Hits-item').length === 3);
+    expect(byId('hits-media').querySelectorAll('.fav-body p')[2]!.textContent).toBe('…');
+  });
+
+  it('copes with a page list without hits', async () => {
+    contentDocsResponse = undefined as unknown as unknown[];
+    await start(cfg());
+    expect(treeLabel("Pagina's").closest('li')!.querySelectorAll('.fav-col-tree-leaf')).toHaveLength(0);
+  });
+
+  it('groups several posts of one month, and filters on a post', async () => {
+    contentDocsResponse = [
+      { id: 'p1', title: 'Over ons', url: 'https://site.test/over/', type: 'page' },
+      { id: 'b1', title: 'Eerste', url: 'https://site.test/eerste/', type: 'post', date: '2024-03-05' },
+      { id: 'b2', title: 'Tweede', url: 'https://site.test/tweede/', type: 'post', date: '2024-03-20' },
+      { id: 'b3', title: 'Later', url: 'https://site.test/later/', type: 'post', date: '2024-04-01' },
+    ];
+    await start(cfg());
+    await waitFor(() => !!treeLabel('Tweede'));
+    expect(treeLabel('Maart').closest('li')!.querySelectorAll('.fav-col-tree-leaf')).toHaveLength(2);
+    expect(treeLabel('2024').closest('li')!.querySelectorAll(':scope > ul > li')).toHaveLength(2);
+
+    await type('over');
+    toggle('Eerste');
+    await settle();
+    const filter = String(lastFilter('content'));
+    expect(filter).toContain('url = "https://site.test/tweede/"');
+    expect(filter).not.toContain('eerste');
+    expect(treeBox('Maart').indeterminate).toBe(true);
+  });
+
+  it('links every level above the current one in the page breadcrumb', async () => {
+    contentDocsResponse = [
+      { id: 'p1', title: 'Over ons', url: 'https://site.test/over/', type: 'page' },
+      { id: 'p2', title: 'Team', url: 'https://site.test/over/team/', type: 'page' },
+      { id: 'p3', title: 'Leden', url: 'https://site.test/over/team/leden/', type: 'page' },
+      { id: 'p4', title: 'Oud-leden', url: 'https://site.test/over/team/oud/', type: 'page' },
+      { id: 'p5', title: 'Bestuur', url: 'https://site.test/over/bestuur/', type: 'page' },
+      { id: 'p6', title: 'Contact', url: 'https://site.test/contact/', type: 'page' },
+    ];
+    await start(cfg({ browseMode: true }));
+    await waitFor(() => !!byId('page-browse-grid').querySelector('.fav-col-card'));
+    const card = (name: string) =>
+      [...byId('page-browse-grid').querySelectorAll<HTMLElement>('.fav-col-card')].find(
+        c => c.querySelector('.fav-col-label')!.textContent === name,
+      )!;
+    card('Over ons').click();
+    card('Team').click();
+
+    const crumb = byId('page-breadcrumb');
+    expect(crumb.textContent).toBe("Pagina's›Over ons›Team");
+    expect([...crumb.querySelectorAll<HTMLAnchorElement>('.fav-bc-link')].map(a => a.dataset['path'])).toEqual([
+      '',
+      'over',
+    ]);
+    crumb.querySelectorAll<HTMLAnchorElement>('.fav-bc-link')[1]!.click();
+    expect(crumb.textContent).toBe("Pagina's›Over ons");
+  });
+
+  it('builds the filter tree on a page without the page browser', async () => {
+    const withoutPageBrowser = markup.replace(
+      /<div class="fav-browse" id="fav-1-page-browse">[\s\S]*?<\/div>\s*<\/div>/,
+      '',
+    );
+    expect(withoutPageBrowser).not.toContain('page-browse-grid');
+    await start(cfg(), withoutPageBrowser);
+    await waitFor(() => !!treeLabel('Contact'));
+    expect(byId('page-browse-grid')).toBeNull();
+  });
+
+  it('filters content from "Alles" when there is no media tree', async () => {
+    await start(cfg({ showMedia: false }));
+    await waitFor(() => !!treeLabel('Contact'));
+    await type('over');
+    toggle('Contact');
+    await settle();
+    toggle('Alles');
+    toggle('Alles');
+    await settle();
+    expect(lastFilter('content')).toBe('url = "__avpvh_no_match__"');
+  });
+
+  it('opens images with a page number and hits without a collection in the lightbox', async () => {
+    lightboxHits = [
+      hit({ id: 'l1', collection: 'boeken/deel1', page_number: 1, url: 'https://site.test/p1.jpg', text: 'brief' }),
+      hit({ id: 'l2', collection: undefined as unknown as string, url: 'https://site.test/p2.jpg', text: 'tekst' }),
+      hit({ id: 'l3', collection: 'boeken/deel1', url: 'https://site.test/los.pdf', text: 'brief' }),
+    ];
+    await start(cfg());
+    await type('brief');
+    await waitFor(() => !!byId('hits-media').querySelector('a.fav-thumb'));
+    byId('hits-media').querySelector<HTMLAnchorElement>('a.fav-thumb')!.click();
+    await waitFor(() => lightbox.open.mock.calls.length === 2);
+
+    const [items] = lightbox.open.mock.calls[1]!;
+    expect(items[0]).toMatchObject({ page: 1, isMatch: true, caption: 'boeken/deel1 — pagina 1' });
+    expect(items[0].kind).toBeUndefined();
+    expect(items[1]).toMatchObject({ caption: '', page: undefined });
+    expect(items[2]).toMatchObject({ kind: 'pdf', page: undefined, isMatch: true });
   });
 });

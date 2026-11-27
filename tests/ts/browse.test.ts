@@ -290,3 +290,79 @@ describe('BrowseMode collections', () => {
     expect(lb.open).not.toHaveBeenCalled();
   });
 });
+
+describe('BrowseMode with incomplete answers', () => {
+  const answerWith = (override: (body: Record<string, unknown>) => unknown) =>
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as Record<string, unknown>;
+      const custom = override(body);
+      return new Response(JSON.stringify(custom === undefined ? respond(body) : custom));
+    });
+
+  it('shows folders without covers when the cover search has no hits or fails', async () => {
+    answerWith(body => (body['limit'] === 1000 ? {} : undefined));
+    await browse.enter();
+    expect(labels()).toEqual(['boeken', 'map', 'losse', 'map']);
+    expect(grid.querySelectorAll('img')).toHaveLength(0);
+
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as Record<string, unknown>;
+      if (body['limit'] === 1000) return new Response('', { status: 500 });
+      return new Response(JSON.stringify(respond(body)));
+    });
+    browse.setActiveCollections(null);
+    await flush();
+    await flush();
+    expect(grid.querySelectorAll('img')).toHaveLength(0);
+  });
+
+  it('orders cover thumbnails without a page number first', async () => {
+    answerWith(body =>
+      body['limit'] === 1000
+        ? {
+            hits: [
+              hit({ collection: 'losse', thumb_url: 'https://site.test/2.jpg', page_number: 2 }),
+              hit({ collection: 'losse', thumb_url: 'https://site.test/0.jpg' }),
+              hit({ collection: 'losse', thumb_url: 'https://site.test/1.jpg', page_number: 1 }),
+            ],
+          }
+        : undefined,
+    );
+    await browse.enter();
+    expect([...card('losse').querySelectorAll('img')].map(i => i.getAttribute('src'))).toEqual([
+      'https://site.test/0.jpg',
+      'https://site.test/1.jpg',
+      'https://site.test/2.jpg',
+    ]);
+  });
+
+  it('opens nothing when the lightbox search returns no hits', async () => {
+    collectionHits = [hit({ id: 'a', page_number: 1 })];
+    total = 1;
+    await browse.enter('losse');
+    answerWith(body => (body['limit'] === 5000 ? {} : undefined));
+    grid.querySelector<HTMLAnchorElement>('a.fav-thumb')!.click();
+    await flush();
+    expect(lb.open).toHaveBeenCalledWith([], 0);
+  });
+
+  it('captions a page without number or title, and a PDF without a source link', async () => {
+    collectionHits = [
+      hit({ id: 'kaal', text: 'tekst' }),
+      hit({ id: 'pdf', url: 'https://site.test/a.pdf', text: '' }),
+      hit({ id: 'foto', page_number: 4, has_image: true }),
+    ];
+    total = 3;
+    await browse.enter('losse');
+    grid.querySelector<HTMLAnchorElement>('a.fav-thumb')!.click();
+    await flush();
+
+    const [items] = lb.open.mock.calls[0]!;
+    const byUrl = (url: string) => items.find((i: { url: string }) => i.url === url);
+    expect(byUrl('https://site.test/x.jpg').caption).toBeDefined();
+    expect(items.find((i: { caption: string }) => i.caption === 'losse')).toBeDefined();
+    expect(byUrl('https://site.test/a.pdf')).toMatchObject({ kind: 'pdf', sourceUrl: undefined, page: undefined });
+    expect(items.find((i: { page?: number }) => i.page === 4)).toMatchObject({ caption: 'losse — pagina 4' });
+  });
+});

@@ -1163,3 +1163,44 @@ describe('OCR of a selection', () => {
     expect(posted).toHaveLength(0);
   });
 });
+
+describe('less common paths', () => {
+  it('shows the enter icon again after leaving full screen', () => {
+    lb.open([scan(1)], 0);
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      value: document.querySelector('.fav-lb'),
+    });
+    document.dispatchEvent(new Event('fullscreenchange'));
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+    document.dispatchEvent(new Event('fullscreenchange'));
+    expect(q('.fav-lb-fullscreen').innerHTML).toContain('M7 14H5v5h5v-2H7v-3z');
+  });
+
+  it('leaves a finger drag alone while not zoomed in', () => {
+    lb.open([scan(1), scan(2)], 0);
+    touch('touchstart', [[100, 100]]);
+    expect(touch('touchmove', [[60, 100]]).defaultPrevented).toBe(false);
+    touch('touchend', [], [[20, 100]]);
+    expect(counter()).toBe('2 / 2');
+  });
+
+  it('runs local OCR on the saved address, or the default one, when the field is empty', async () => {
+    lb.open([scan(1)], 0);
+    click('.fav-lb-edit');
+    Object.defineProperties(q('.fav-lb-img'), { naturalWidth: { value: 10 }, naturalHeight: { value: 10 } });
+    q<HTMLSelectElement>('.fav-lb-crop-engine').value = 'local';
+    q<HTMLInputElement>('.fav-lb-crop-local-url').value = '';
+
+    reply('http://localhost:5001/v1/convert/file', { document: { md_content: 'standaard' } });
+    click('.fav-lb-edit-ocr');
+    await flush();
+    expect(textarea().value).toBe('standaard');
+
+    localStorage.setItem('avpvhFavLocalOcrUrl', 'http://127.0.0.1:7000/ocr');
+    reply('http://127.0.0.1:7000/ocr', { document: { md_content: 'opgeslagen' } });
+    click('.fav-lb-edit-ocr');
+    await flush();
+    expect(textarea().value).toBe('opgeslagen');
+  });
+});

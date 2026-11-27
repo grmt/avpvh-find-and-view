@@ -603,3 +603,66 @@ describe('document editor', () => {
     expect(el('fav-doc-save-msg').textContent).toBe('Opgeslagen! (taak #?)');
   });
 });
+
+describe('less common data', () => {
+  it('shows an empty folder, and a file that has children', async () => {
+    const saved = responses['tree'];
+    responses['tree'] = {
+      name: 'root',
+      path: '',
+      leaf: false,
+      children: [
+        { name: 'leeg', path: 'leeg', leaf: false, children: [] },
+        {
+          name: 'boek',
+          path: 'boek',
+          leaf: true,
+          children: [{ name: 'p1', path: 'boek/p1', leaf: true, children: [] }],
+        },
+      ],
+    };
+    promptMock.mockReturnValue('x');
+    rowOf('root').querySelector<HTMLButtonElement>('.fav-tree-add')!.click();
+    await flush();
+
+    expect(nodeOf('leeg').querySelector('.fav-tree-icon')!.textContent).toBe('📂');
+    const icon = nodeOf('boek').querySelector<HTMLElement>('.fav-tree-icon')!;
+    expect(icon.textContent).toBe('📄');
+    icon.click();
+    icon.click();
+    expect(icon.textContent).toBe('📄');
+
+    responses['tree'] = saved;
+    rowOf('root').querySelector<HTMLButtonElement>('.fav-tree-add')!.click();
+    await flush();
+    expect(label('a')).toBeDefined();
+  });
+
+  it('drags every selected item when a selected item is dragged', async () => {
+    select('b');
+    select('a1');
+    dragStart(nodeOf('b'));
+    const over = dragEvent('dragover');
+    rowOf('root').dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(true);
+
+    rowOf('root').dispatchEvent(dragEvent('drop'));
+    await flush();
+    expect(confirmMock).toHaveBeenCalledWith("Verplaats 2 map(pen) naar 'root'?");
+    // b is already in the root: skipped. a/a1 moves up.
+    expect(calls.filter(c => c.endpoint === 'tree/move').map(c => JSON.parse(c.init.body as string))).toEqual([
+      { from: 'a/a1', to: 'a1' },
+    ]);
+    nodeOf('b').dispatchEvent(dragEvent('dragend'));
+  });
+
+  it('opens a found document that has no text, collection or page', async () => {
+    responses['tree/doc-search'] = [{ id: 'kaal' }];
+    el('fav-doc-search').click();
+    await flush();
+    el('fav-doc-results').querySelector<HTMLTableRowElement>('tr[data-id]')!.click();
+    expect((el('fav-doc-text') as HTMLInputElement).value).toBe('');
+    expect(el('fav-doc-title').textContent).toBe('kaal');
+    responses['tree/doc-search'] = [];
+  });
+});
