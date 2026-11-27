@@ -14,3 +14,7 @@ dist/class-*.php
 # Internal notes kept out of Git: TODO.local.md (via *.local.*) and agent memory
 memory/
 .phpunit.cache/
+
+# Vitest coverage
+coverage/
+coverage-js/
