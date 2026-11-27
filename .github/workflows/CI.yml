@@ -171,7 +171,7 @@ jobs:
   # own plugins. Without SONAR_TOKEN the SonarQube Cloud job is skipped.
   quality:
     name: "Quality"
-    uses: grmt/wp-plugin-ci/.github/workflows/quality.yml@feature/vitest-coverage  # TODO: back to @main once wp-plugin-ci#17 is merged
+    uses: grmt/wp-plugin-ci/.github/workflows/quality.yml@main
     permissions:
       contents: read
       id-token: write
