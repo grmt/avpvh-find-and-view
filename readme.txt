@@ -4,7 +4,7 @@ Tags: search, meilisearch, scans, pdf, archive
 Requires at least: 7.1
 Tested up to: 7.1
 Requires PHP: 8.4
-Stable tag: 0.1.84
+Stable tag: 0.1.85
 License: MIT
 License URI: https://opensource.org/licenses/MIT
 
@@ -33,6 +33,9 @@ To deploy with `deploy.sh`, copy `deploy.local.env.example` to
 `deploy.local.env` and fill in the server login, path and sites.
 
 == Changelog ==
+
+= 0.1.85 =
+* Release: roll out the 0.1.84 editor and search fixes to all configured sites.
 
 = 0.1.84 =
 * Fix: pressing Ctrl+B, Ctrl+I or Ctrl+Shift+X (or the B, I and S buttons) again in the text editor now undoes the formatting instead of adding it twice; bold and italic stay apart.
