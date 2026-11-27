@@ -545,7 +545,12 @@ describe('editing a page', () => {
     textarea().setSelectionRange(0, 5);
     key('b', { ctrlKey: true });
     expect(textarea().value).toBe('**Tekst** 1');
-    // Wrapping selects the text inside the markers; unwrapping needs them selected.
+    // Pressing it again undoes it: the selection is still the text inside.
+    key('b', { ctrlKey: true });
+    expect(textarea().value).toBe('Tekst 1');
+    expect([textarea().selectionStart, textarea().selectionEnd]).toEqual([0, 5]);
+    // Selecting the markers as well also works.
+    key('b', { ctrlKey: true });
     textarea().setSelectionRange(0, 9);
     key('b', { ctrlKey: true });
     expect(textarea().value).toBe('Tekst 1');
@@ -553,10 +558,10 @@ describe('editing a page', () => {
     key('i', { ctrlKey: true });
     key('x', { ctrlKey: true, shiftKey: true });
     expect(textarea().value).toBe('*~~Tekst~~* 1');
-    textarea().setSelectionRange(1, 10);
     click('.fav-lb-fmt-strike');
-    textarea().setSelectionRange(0, 7);
+    expect(textarea().value).toBe('*Tekst* 1');
     click('.fav-lb-fmt-italic');
+    expect(textarea().value).toBe('Tekst 1');
     click('.fav-lb-fmt-bold');
     expect(textarea().value).toBe('**Tekst** 1');
 
@@ -629,6 +634,55 @@ describe('editing a page', () => {
     expect(counter()).toBe('1 / 2');
   });
 
+  it('tells bold and italic apart when undoing', () => {
+    lb.open([scan(1)], 0);
+    click('.fav-lb-edit');
+    const ta = textarea();
+    const select = (text: string) => {
+      const start = ta.value.indexOf(text);
+      ta.setSelectionRange(start, start + text.length);
+    };
+
+    // Italic inside bold, then undone again: the bold stays.
+    ta.value = '**vet** woord';
+    select('vet');
+    key('i', { ctrlKey: true });
+    expect(ta.value).toBe('***vet*** woord');
+    key('i', { ctrlKey: true });
+    expect(ta.value).toBe('**vet** woord');
+    key('b', { ctrlKey: true });
+    expect(ta.value).toBe('vet woord');
+
+    // Bold inside italic, and undoing bold on bold-italic text.
+    ta.value = '*schuin* woord';
+    select('schuin');
+    key('b', { ctrlKey: true });
+    expect(ta.value).toBe('***schuin*** woord');
+    key('b', { ctrlKey: true });
+    expect(ta.value).toBe('*schuin* woord');
+
+    ta.value = '***beide*** woord';
+    select('beide');
+    key('b', { ctrlKey: true });
+    expect(ta.value).toBe('*beide* woord');
+
+    // Selected with the markers: bold text gets italic added, not its bold removed.
+    ta.value = '**vet** woord';
+    select('**vet**');
+    key('i', { ctrlKey: true });
+    expect(ta.value).toBe('***vet*** woord');
+    ta.value = '*schuin* woord';
+    select('*schuin*');
+    key('i', { ctrlKey: true });
+    expect(ta.value).toBe('schuin woord');
+
+    // An empty selection between markers removes them.
+    ta.value = 'a **** b';
+    ta.setSelectionRange(4, 4);
+    key('b', { ctrlKey: true });
+    expect(ta.value).toBe('a  b');
+  });
+
   it('toggles a heading, reflows a paragraph and builds a table', () => {
     lb.open([scan(1)], 0);
     click('.fav-lb-edit');
@@ -657,8 +711,13 @@ describe('editing a page', () => {
     ta.value = 'naam  leeftijd\nJan  40\nPiet\t30\t|x|';
     ta.setSelectionRange(0, ta.value.length);
     click('.fav-lb-fmt-table');
-    // A line with a pipe is split on pipes only, so its tab stays in the cell.
-    expect(ta.value).toBe('| naam | leeftijd |\n| --- | --- |\n| Jan | 40 |\n| Piet\t30 | x |');
+    // A line is split on every pipe and tab in it.
+    expect(ta.value).toBe('| naam | leeftijd |  |\n| --- | --- | --- |\n| Jan | 40 |  |\n| Piet | 30 | x |');
+
+    ta.value = '| a |  | c |\nd\t\te';
+    ta.setSelectionRange(0, ta.value.length);
+    click('.fav-lb-fmt-table');
+    expect(ta.value).toBe('| a |  | c |\n| --- | --- | --- |\n| d | e |  |');
 
     ta.value = 'a\tb\tc\nd\te';
     ta.setSelectionRange(0, ta.value.length);

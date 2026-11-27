@@ -265,6 +265,23 @@ describe('search results', () => {
     expect(lastFilter('media')).toBe('text CONTAINS "brief" OR NOT text CONTAINS "kaart" AND text CONTAINS "rol"');
   });
 
+  it.each([
+    ['brief OR', 'text CONTAINS "brief"'],
+    ['OR brief', 'text CONTAINS "brief"'],
+    ['brief AND', 'text CONTAINS "brief"'],
+    ['AND brief OR OR kaart', 'text CONTAINS "brief" OR text CONTAINS "kaart"'],
+    ['brief AND NOT', 'text CONTAINS "brief"'],
+    ['oranje OR oregano', 'text CONTAINS "oranje" OR text CONTAINS "oregano"'],
+    ['NOTA AND ANDERS', 'text CONTAINS "NOTA" AND text CONTAINS "ANDERS"'],
+  ])('ignores a loose operator in the word-part search: %s', async (query, filter) => {
+    await start(cfg());
+    byId<HTMLInputElement>('substr').checked = true;
+    byId('substr').dispatchEvent(new Event('change'));
+    await type(query);
+    await waitFor(() => lastFilter('media') !== undefined);
+    expect(lastFilter('media')).toBe(filter);
+  });
+
   it('works with only one source', async () => {
     await start(cfg({ showContent: false }));
     await type('brief');

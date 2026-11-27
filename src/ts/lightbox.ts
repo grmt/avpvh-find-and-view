@@ -1300,7 +1300,11 @@ export class Lightbox {
   }
 
   // Wraps the selection in a markdown marker (**bold**, *italic*,
-  // ~~strikethrough~~); toggles it off if the selection is already wrapped.
+  // ~~strikethrough~~), or removes it when the selection is already wrapped:
+  // either the markers sit just outside the selection (as right after
+  // wrapping, which selects the text inside) or the selection includes them.
+  // Asterisks are counted so bold and italic stay apart: a run of 1 or 3 is
+  // italic, a run of 2 or 3 is bold (*** is both).
   private wrapSelection(marker: string): void {
     const ta = this.editTextarea();
     const start = ta.selectionStart;
@@ -1308,18 +1312,37 @@ export class Lightbox {
     const selected = ta.value.slice(start, end);
     const before = ta.value.slice(0, start);
     const after = ta.value.slice(end);
+    const len = marker.length;
 
-    if (selected.length >= marker.length * 2 && selected.startsWith(marker) && selected.endsWith(marker)) {
-      const inner = selected.slice(marker.length, selected.length - marker.length);
+    if (Lightbox.isWrapped(marker, Lightbox.markerRun(before, after, marker[0]!))) {
+      this.setTextareaValue(ta, before.slice(0, -len) + selected + after.slice(len), start - len, end - len);
+    } else if (
+      selected.length >= len * 2 &&
+      Lightbox.isWrapped(marker, Lightbox.markerRun(selected, selected, marker[0]!, true))
+    ) {
+      const inner = selected.slice(len, selected.length - len);
       this.setTextareaValue(ta, before + inner + after, start, start + inner.length);
     } else {
-      this.setTextareaValue(
-        ta,
-        before + marker + selected + marker + after,
-        start + marker.length,
-        end + marker.length,
-      );
+      this.setTextareaValue(ta, before + marker + selected + marker + after, start + len, end + len);
     }
+  }
+
+  // How many marker characters enclose a selection on both sides: at the end
+  // of `left` and the start of `right` (around it), or with `inside`, at the
+  // start of `left` and the end of `right` (the selection's own edges).
+  private static markerRun(left: string, right: string, char: string, inside = false): number {
+    const count = (text: string, fromEnd: boolean): number => {
+      let n = 0;
+      while (n < text.length && text[fromEnd ? text.length - 1 - n : n] === char) n++;
+      return n;
+    };
+    return inside ? Math.min(count(left, false), count(right, true)) : Math.min(count(left, true), count(right, false));
+  }
+
+  private static isWrapped(marker: string, run: number): boolean {
+    if (marker === '*') return run % 2 === 1;
+    if (marker === '**') return run >= 2;
+    return run >= marker.length;
   }
 
   // Toggles a "## " prefix on the line the cursor/selection starts on.
@@ -1385,16 +1408,17 @@ export class Lightbox {
     const selected = ta.value.slice(start, end);
     if (!selected.trim()) return;
 
+    // Pipes and tabs both separate cells (a tab next to a pipe counts once,
+    // so "a\t|b" is two cells); a line with neither is split on runs of two
+    // or more spaces. Outer pipes don't make empty edge cells, but "| |"
+    // inside a row is a real empty cell.
     const splitLine = (l: string): string[] => {
       const trimmed = l.trim();
-      if (trimmed.includes('|')) {
-        return trimmed
-          .split('|')
-          .map(c => c.trim())
-          .filter((c, i, arr) => c !== '' || (i !== 0 && i !== arr.length - 1));
-      }
-      if (trimmed.includes('\t')) return trimmed.split('\t').map(c => c.trim());
-      return trimmed.split(/ {2,}/).map(c => c.trim());
+      if (!/[|\t]/.test(trimmed)) return trimmed.split(/ {2,}/);
+      const cells = trimmed.split(/[ \t]*\|[ \t]*|[ \t]*\t[ \t]*/).map(c => c.trim());
+      if (trimmed.startsWith('|')) cells.shift();
+      if (trimmed.endsWith('|')) cells.pop();
+      return cells;
     };
 
     const rows = selected

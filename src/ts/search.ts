@@ -10,21 +10,26 @@ import { compareHitOrder, type FavConfig, type MeiliHit } from './types';
 import { showSearchError, hideSearchError, searchIndex, proxyHttpClient } from './meili';
 import { escapeHtml, highlightHtml, safeUrl, urlAttribute, quoteFilter } from './escape';
 
+// Word-part search: terms joined by OR and AND, each optionally negated
+// with NOT. An operator counts only as a whole word, so "oranje" and
+// "NOTA" are terms; a loose operator (at either end, or doubled) is
+// ignored instead of becoming part of a term.
+const OR_RE = /(?:^|\s+)OR(?=\s|$)/i;
+const AND_RE = /(?:^|\s+)AND(?=\s|$)/i;
+const NOT_RE = /^NOT(?:\s+|$)/i;
+
 function parseContains(q: string): string {
   return q
     .trim()
-    .split(/\s+OR\s+/i)
+    .split(OR_RE)
     .map(op =>
       op
         .trim()
-        .split(/\s+AND\s+/i)
+        .split(AND_RE)
         .map(ap => {
           ap = ap.trim();
-          const neg = /^NOT\s+/i.test(ap);
-          const term = ap
-            .replace(/^NOT\s+/i, '')
-            .replace(/"/g, '')
-            .trim();
+          const neg = NOT_RE.test(ap);
+          const term = ap.replace(NOT_RE, '').replace(/"/g, '').trim();
           if (!term) return null;
           return (neg ? 'NOT ' : '') + `text CONTAINS ${quoteFilter(term)}`;
         })
