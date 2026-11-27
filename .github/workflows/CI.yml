@@ -118,7 +118,7 @@ jobs:
         run: |
           npm ci --ignore-scripts
 
-      # ESLint and Stylelint have no config in this repo yet.
+      # Stylelint has no config in this repo yet.
       - name: "Typecheck"
         run: |
           npm run lint:ts:typecheck
