@@ -84,9 +84,7 @@ describe('searchIndex', () => {
     fetchMock.mockResolvedValue(json({ results: [{ hits: [1] }] }));
 
     await expect(searchIndex(proxied, 'media', { q: 'x' })).resolves.toEqual({ hits: [1] });
-    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).queries).toEqual([
-      { q: 'x', indexUid: 'media' },
-    ]);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).queries).toEqual([{ q: 'x', indexUid: 'media' }]);
   });
 
   it('calls Meilisearch directly otherwise', async () => {
@@ -127,16 +125,14 @@ describe('proxyHttpClient', () => {
 
   it('refuses other Meilisearch operations', async () => {
     const client = proxyHttpClient(proxied);
-    await expect(client('https://meili.test/indexes/media/documents')).rejects.toThrow(
-      'Unsupported search operation',
-    );
+    await expect(client('https://meili.test/indexes/media/documents')).rejects.toThrow('Unsupported search operation');
   });
 
   it('refuses a body that is not a string', async () => {
     const client = proxyHttpClient(proxied);
-    await expect(
-      client('https://meili.test/multi-search', { body: new Blob(['{}']) }),
-    ).rejects.toThrow('Unsupported search request body');
+    await expect(client('https://meili.test/multi-search', { body: new Blob(['{}']) })).rejects.toThrow(
+      'Unsupported search request body',
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

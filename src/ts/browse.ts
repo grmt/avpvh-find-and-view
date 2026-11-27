@@ -7,10 +7,10 @@ import { escapeHtml, urlAttribute, quoteFilter } from './escape';
 const PAGE_SIZE = 60;
 
 export class BrowseMode {
-  private currentPath: string | null = null;   // null = root, string = folder or collection
+  private currentPath: string | null = null; // null = root, string = folder or collection
   private loadMoreOffset = 0;
   private lightboxHandler: ((e: Event) => Promise<void>) | null = null;
-  private allCollections: Record<string, number> = {};  // cached facets
+  private allCollections: Record<string, number> = {}; // cached facets
   private activeCollections: Set<string> | null = null; // null = all active
 
   constructor(
@@ -21,10 +21,16 @@ export class BrowseMode {
     private gridEl: HTMLElement,
   ) {}
 
-  show(): void { this.container.style.display = ''; }
-  hide(): void { this.container.style.display = 'none'; }
+  show(): void {
+    this.container.style.display = '';
+  }
+  hide(): void {
+    this.container.style.display = 'none';
+  }
 
-  current(): string | null { return this.currentPath; }
+  current(): string | null {
+    return this.currentPath;
+  }
 
   setActiveCollections(paths: string[] | null): void {
     this.activeCollections = paths ? new Set(paths) : null;
@@ -90,7 +96,7 @@ export class BrowseMode {
     this.breadcrumbEl.querySelectorAll<HTMLAnchorElement>('.fav-bc-link').forEach(link => {
       link.addEventListener('click', e => {
         e.preventDefault();
-        this.allCollections = {};  // invalidate cache so we re-fetch on back-nav
+        this.allCollections = {}; // invalidate cache so we re-fetch on back-nav
         void this.enter(link.dataset['path'] || undefined);
       });
     });
@@ -155,18 +161,16 @@ export class BrowseMode {
     }
   }
 
-  private makeCard(
-    label: string,
-    thumbs: string[],
-    count: number | null,
-    icon = '',
-  ): HTMLElement {
+  private makeCard(label: string, thumbs: string[], count: number | null, icon = ''): HTMLElement {
     const card = document.createElement('div');
     card.className = 'fav-col-card';
     let thumbHtml: string;
     if (thumbs.length) {
       const n = Math.min(thumbs.length, 6);
-      const imgs = thumbs.slice(0, 6).map(u => `<img src="${urlAttribute(u)}" alt="" loading="lazy">`).join('');
+      const imgs = thumbs
+        .slice(0, 6)
+        .map(u => `<img src="${urlAttribute(u)}" alt="" loading="lazy">`)
+        .join('');
       thumbHtml = `<div class="fav-mosaic fav-mosaic-${n}">${imgs}</div>`;
     } else {
       thumbHtml = icon ? `<span class="fav-col-icon">${icon}</span>` : '';
@@ -204,7 +208,9 @@ export class BrowseMode {
 
     // Up to 6 thumbs per collection, sorted by page_number asc
     const colThumbs: Record<string, string[]> = Object.create(null);
-    const hits = (data?.hits ?? []).filter(h => h.thumb_url).sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
+    const hits = (data?.hits ?? [])
+      .filter(h => h.thumb_url)
+      .sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
     for (const hit of hits) {
       const thumbs = (colThumbs[hit.collection] ??= []);
       if (thumbs.length < 6) thumbs.push(hit.thumb_url!);
@@ -250,7 +256,10 @@ export class BrowseMode {
       attributesToRetrieve: ['id', 'url', 'thumb_url', 'title', 'page_number', 'date', 'collection'],
     });
 
-    if (!data) { this.gridEl.innerHTML = ''; return; }
+    if (!data) {
+      this.gridEl.innerHTML = '';
+      return;
+    }
 
     const hits = (data.hits ?? []).sort(compareHitOrder);
     const total = data.estimatedTotalHits ?? 0;
@@ -268,7 +277,9 @@ export class BrowseMode {
         thumbInner +
         (hit.page_number != null
           ? `<span class="fav-page-badge">${escapeHtml(hit.page_number)}</span>`
-          : hit.title ? `<span class="fav-page-badge fav-title-badge">${escapeHtml(hit.title)}</span>` : '') +
+          : hit.title
+            ? `<span class="fav-page-badge fav-title-badge">${escapeHtml(hit.title)}</span>`
+            : '') +
         `</a>`;
       this.gridEl.appendChild(div);
     });
@@ -301,18 +312,28 @@ export class BrowseMode {
         q: '',
         filter: `collection = ${quoteFilter(collection)}`,
         limit: 5000,
-        attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
+        attributesToRetrieve: [
+          'id',
+          'url',
+          'source_url',
+          'title',
+          'page_number',
+          'date',
+          'text',
+          'collection',
+          'text_format',
+          'has_image',
+        ],
       });
       if (!data) return;
 
-      const allHits = (data.hits ?? [])
-        .filter(h => h.url)
-        .sort(compareHitOrder);
+      const allHits = (data.hits ?? []).filter(h => h.url).sort(compareHitOrder);
 
       const items: LightboxItem[] = allHits.map(h => {
         // Show only leaf collection name + page number (not full path) —
         // chat transcripts have no page_number, so fall back to their title.
-        const caption = collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
+        const caption =
+          collectionLeaf + (h.page_number != null ? ` — pagina ${h.page_number}` : h.title ? ` — ${h.title}` : '');
         const isMd = h.text_format === 'md' || (h.text ? looksLikeMarkdown(h.text) : false);
         const mdHtml = h.text ? renderMarkdown(h.text) : '';
         const plainHtml = h.text ? renderPlain(h.text) : '';
@@ -321,8 +342,27 @@ export class BrowseMode {
         const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
         const hasImage = h.has_image !== false;
         return isPdf
-          ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text, textAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, collection: h.collection, rawText: h.text }
-          : { url: h.url, caption, text, textAlt, collection: h.collection, rawText: h.text, page: h.page_number ?? undefined, ...(hasImage ? {} : { kind: 'text' as const }) };
+          ? {
+              url: h.url,
+              sourceUrl: h.source_url ?? undefined,
+              caption,
+              text,
+              textAlt,
+              kind: 'pdf' as const,
+              page: h.page_number ?? undefined,
+              collection: h.collection,
+              rawText: h.text,
+            }
+          : {
+              url: h.url,
+              caption,
+              text,
+              textAlt,
+              collection: h.collection,
+              rawText: h.text,
+              page: h.page_number ?? undefined,
+              ...(hasImage ? {} : { kind: 'text' as const }),
+            };
       });
 
       const startIdx = allHits.findIndex(h => h.id === hitId);

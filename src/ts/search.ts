@@ -21,7 +21,10 @@ function parseContains(q: string): string {
         .map(ap => {
           ap = ap.trim();
           const neg = /^NOT\s+/i.test(ap);
-          const term = ap.replace(/^NOT\s+/i, '').replace(/"/g, '').trim();
+          const term = ap
+            .replace(/^NOT\s+/i, '')
+            .replace(/"/g, '')
+            .trim();
           if (!term) return null;
           return (neg ? 'NOT ' : '') + `text CONTAINS ${quoteFilter(term)}`;
         })
@@ -41,11 +44,15 @@ function buildFilter(collectionFilter: string | null, substringMode: boolean, qu
 }
 
 function hitToHtml(hit: MeiliHit, withLink: boolean): string {
-  const snip = hit._snippetResult?.text?.value != null
-    ? highlightHtml(hit._snippetResult.text.value) : escapeHtml((hit.text ?? '').substring(0, 200) + '…');
-  const title = escapeHtml(hit.page_number != null
-    ? `${hit.title || hit.collection} — pagina ${hit.page_number}`
-    : (hit.title || hit.collection || hit.id));
+  const snip =
+    hit._snippetResult?.text?.value != null
+      ? highlightHtml(hit._snippetResult.text.value)
+      : escapeHtml((hit.text ?? '').substring(0, 200) + '…');
+  const title = escapeHtml(
+    hit.page_number != null
+      ? `${hit.title || hit.collection} — pagina ${hit.page_number}`
+      : hit.title || hit.collection || hit.id,
+  );
 
   if (!withLink) {
     // Media hit: always clickable into the lightbox, even without a thumbnail
@@ -64,7 +71,11 @@ function hitToHtml(hit: MeiliHit, withLink: boolean): string {
     <h3><a href="${urlAttribute(hit.url)}">${title}</a></h3><p>${snip}</p></div>`;
 }
 
-interface PgNode { url: string; title: string; children: Record<string, PgNode> }
+interface PgNode {
+  url: string;
+  title: string;
+  children: Record<string, PgNode>;
+}
 
 function initInstance(cfg: FavConfig): void {
   const root = document.getElementById(cfg.uid);
@@ -88,7 +99,19 @@ function initInstance(cfg: FavConfig): void {
   type SearchRequests = Extract<Parameters<typeof baseClient.search>[0], readonly unknown[]>;
 
   const emptyResults = (reqs: SearchRequests) =>
-    Promise.resolve({ results: reqs.map(() => ({ hits: [], nbHits: 0, page: 0, nbPages: 0, hitsPerPage: cfg.perPage, processingTimeMS: 0, exhaustiveNbHits: true as const, query: '', params: '' })) });
+    Promise.resolve({
+      results: reqs.map(() => ({
+        hits: [],
+        nbHits: 0,
+        page: 0,
+        nbPages: 0,
+        hitsPerPage: cfg.perPage,
+        processingTimeMS: 0,
+        exhaustiveNbHits: true as const,
+        query: '',
+        params: '',
+      })),
+    });
 
   const client = {
     search: (requests: SearchRequests) => {
@@ -96,11 +119,12 @@ function initInstance(cfg: FavConfig): void {
       const q = sbInput?.value.trim() ?? '';
       if (cfg.browseMode && !q) return emptyResults(requests);
       const filtered: SearchRequests = requests.map(req => {
-        const filter = req.indexName === cfg.mediaIndex
-          ? buildFilter(collectionFilter, substringMode, q)
-          : req.indexName === cfg.contentIndex
-          ? (pageFilter ?? '')
-          : '';
+        const filter =
+          req.indexName === cfg.mediaIndex
+            ? buildFilter(collectionFilter, substringMode, q)
+            : req.indexName === cfg.contentIndex
+              ? (pageFilter ?? '')
+              : '';
         return { ...req, params: { ...req.params, filters: filter } };
       });
       // InstantSearch types searchClient as a union of client shapes, so search()
@@ -109,7 +133,10 @@ function initInstance(cfg: FavConfig): void {
     },
   };
 
-  const search = instantsearch({ indexName: cfg.showMedia ? cfg.mediaIndex : cfg.contentIndex, searchClient: client as Parameters<typeof instantsearch>[0]['searchClient'] });
+  const search = instantsearch({
+    indexName: cfg.showMedia ? cfg.mediaIndex : cfg.contentIndex,
+    searchClient: client as Parameters<typeof instantsearch>[0]['searchClient'],
+  });
 
   const widgets: any[] = [
     searchBox({ container: `#${cfg.uid}-searchbox`, placeholder: cfg.placeholder, showReset: true, showSubmit: false }),
@@ -119,7 +146,11 @@ function initInstance(cfg: FavConfig): void {
   if (cfg.showMedia) {
     widgets.push(
       // hitToHtml owns escaping; avoid escaping snippets twice in InstantSearch.
-      hits({ container: `#${cfg.uid}-hits-media`, escapeHTML: false, templates: { item: (hit: MeiliHit) => hitToHtml(hit, false), empty: () => '' } }),
+      hits({
+        container: `#${cfg.uid}-hits-media`,
+        escapeHTML: false,
+        templates: { item: (hit: MeiliHit) => hitToHtml(hit, false), empty: () => '' },
+      }),
       pagination({ container: `#${cfg.uid}-pag-media` }),
     );
   }
@@ -127,8 +158,16 @@ function initInstance(cfg: FavConfig): void {
   if (cfg.showContent) {
     widgets.push(
       index({ indexName: cfg.contentIndex }).addWidgets([
-        hits({ container: `#${cfg.uid}-hits-content`, escapeHTML: false, templates: { item: (hit: MeiliHit) => hitToHtml(hit, true), empty: () => '' } }),
-        configure({ hitsPerPage: cfg.perPage, attributesToSnippet: [`text:${cfg.snippetLen}`], snippetEllipsisText: '…' }),
+        hits({
+          container: `#${cfg.uid}-hits-content`,
+          escapeHTML: false,
+          templates: { item: (hit: MeiliHit) => hitToHtml(hit, true), empty: () => '' },
+        }),
+        configure({
+          hitsPerPage: cfg.perPage,
+          attributesToSnippet: [`text:${cfg.snippetLen}`],
+          snippetEllipsisText: '…',
+        }),
         pagination({ container: `#${cfg.uid}-pag-content` }),
       ]),
     );
@@ -142,8 +181,8 @@ function initInstance(cfg: FavConfig): void {
     if (search.status !== 'error') hideSearchError(cfg);
     (['media', 'content'] as const).forEach(src => {
       const hitsEl = document.getElementById(`${cfg.uid}-hits-${src}`);
-      const pagEl  = document.getElementById(`${cfg.uid}-pag-${src}`);
-      const secEl  = document.getElementById(`${cfg.uid}-section-${src}`);
+      const pagEl = document.getElementById(`${cfg.uid}-pag-${src}`);
+      const secEl = document.getElementById(`${cfg.uid}-section-${src}`);
       if (!pagEl) return;
       const hasHits = !!hitsEl?.querySelector('.ais-Hits-item');
       pagEl.style.display = hasHits ? '' : 'none';
@@ -163,8 +202,8 @@ function initInstance(cfg: FavConfig): void {
 
     if (cfg.showMedia) {
       const browseContainer = root.querySelector<HTMLElement>('.fav-browse')!;
-      const breadcrumbEl    = root.querySelector<HTMLElement>('.fav-breadcrumb')!;
-      const browseGrid      = root.querySelector<HTMLElement>('.fav-browse-grid')!;
+      const breadcrumbEl = root.querySelector<HTMLElement>('.fav-breadcrumb')!;
+      const browseGrid = root.querySelector<HTMLElement>('.fav-browse-grid')!;
       browse = new BrowseMode(cfg, lb!, browseContainer, breadcrumbEl, browseGrid);
     }
 
@@ -204,7 +243,9 @@ function initInstance(cfg: FavConfig): void {
     rootUl: HTMLElement,
     label: string,
     onToggle: () => void,
-    updateParents: (el: HTMLElement) => void = () => { /* no ancestor above this folder */ },
+    updateParents: (el: HTMLElement) => void = () => {
+      /* no ancestor above this folder */
+    },
   ): { li: HTMLLIElement; ul: HTMLUListElement } {
     const ul = document.createElement('ul');
     ul.className = 'fav-col-tree';
@@ -243,7 +284,10 @@ function initInstance(cfg: FavConfig): void {
     // A root "Alles" checkbox above Media/Pagina's/Berichten: a single
     // always-available way to select everything again, regardless of
     // whatever solo/toggle state the buckets below are in.
-    const allFolder = makeTopFolder(outerUl, 'Alles', () => { applyCollectionFilter(); applyPageFilter(); });
+    const allFolder = makeTopFolder(outerUl, 'Alles', () => {
+      applyCollectionFilter();
+      applyPageFilter();
+    });
     outerUl.appendChild(allFolder.li);
     const rootUl = allFolder.ul;
 
@@ -253,7 +297,7 @@ function initInstance(cfg: FavConfig): void {
       colTreeUl = ul;
     }
     if (cfg.showContent) {
-      const { li, ul } = makeTopFolder(rootUl, 'Pagina\'s', () => applyPageFilter(), updateColParents);
+      const { li, ul } = makeTopFolder(rootUl, "Pagina's", () => applyPageFilter(), updateColParents);
       rootUl.appendChild(li);
       pgTreeUl = ul;
 
@@ -281,7 +325,7 @@ function initInstance(cfg: FavConfig): void {
 
   function renderPageBreadcrumb(path: string[]): void {
     if (!pageBrowseCrumb) return;
-    const root = 'Pagina\'s';
+    const root = "Pagina's";
     if (!path.length) {
       pageBrowseCrumb.innerHTML = `<span class="fav-bc-current">${root}</span>`;
       return;
@@ -291,9 +335,10 @@ function initInstance(cfg: FavConfig): void {
       const nd = getPageNodeAt(path.slice(0, i + 1));
       const label = nd?.title ?? path[i];
       html += '<span class="fav-bc-sep">›</span>';
-      html += i === path.length - 1
-        ? `<span class="fav-bc-current">${escapeHtml(label)}</span>`
-        : `<a class="fav-bc-link" href="#" data-path="${escapeHtml(path.slice(0, i + 1).join('/'))}">${escapeHtml(label)}</a>`;
+      html +=
+        i === path.length - 1
+          ? `<span class="fav-bc-current">${escapeHtml(label)}</span>`
+          : `<a class="fav-bc-link" href="#" data-path="${escapeHtml(path.slice(0, i + 1).join('/'))}">${escapeHtml(label)}</a>`;
     }
     pageBrowseCrumb.innerHTML = html;
     pageBrowseCrumb.querySelectorAll<HTMLAnchorElement>('.fav-bc-link').forEach(link => {
@@ -342,11 +387,13 @@ function initInstance(cfg: FavConfig): void {
   function renderDirSublist(children: PgNode[]): string {
     const shown = children.slice(0, 7);
     const hasTruncated = shown.length === 7 && children.length > 7;
-    const items = shown.map((child, i) => {
-      const isTruncated = hasTruncated && i === 6;
-      const label = isTruncated ? child.title.slice(0, 5) + '…' : child.title;
-      return `<div class="fav-dir-sublist-item${isTruncated ? ' fav-dir-sublist-more' : ''}">${escapeHtml(label)}</div>`;
-    }).join('');
+    const items = shown
+      .map((child, i) => {
+        const isTruncated = hasTruncated && i === 6;
+        const label = isTruncated ? child.title.slice(0, 5) + '…' : child.title;
+        return `<div class="fav-dir-sublist-item${isTruncated ? ' fav-dir-sublist-more' : ''}">${escapeHtml(label)}</div>`;
+      })
+      .join('');
     return `<div class="fav-dir-sublist">${items}</div>`;
   }
 
@@ -364,7 +411,7 @@ function initInstance(cfg: FavConfig): void {
       .filter(([, nd]) => nodeIsActive(nd))
       .sort(([, a], [, b]) => a.title.localeCompare(b.title, 'nl'));
     if (!entries.length) {
-      pageBrowseGrid.innerHTML = '<p>Geen pagina\'s gevonden.</p>';
+      pageBrowseGrid.innerHTML = "<p>Geen pagina's gevonden.</p>";
       return;
     }
     for (const [slug, nd] of entries) {
@@ -385,146 +432,182 @@ function initInstance(cfg: FavConfig): void {
 
   // Page & post tree filter (content index): pages by URL path, posts by Jaar/Maand
   if (pgTreeUl) {
-    searchIndex<{ hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }>(cfg, cfg.contentIndex, { q: '', limit: 1000, attributesToRetrieve: ['id', 'title', 'url', 'type', 'date'] })
-      .then((data: { hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }) => {
-        const docs = (data.hits ?? []).filter(d => d.url);
-        const firstDoc = docs[0];
-        if (!firstDoc) return;
-        const baseUrl = firstDoc.url.replace(/^(https?:\/\/[^/]+).*/, '$1');
-        const urlToTitle = new Map(docs.map(d => [d.url, d.title]));
+    searchIndex<{ hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }>(
+      cfg,
+      cfg.contentIndex,
+      { q: '', limit: 1000, attributesToRetrieve: ['id', 'title', 'url', 'type', 'date'] },
+    )
+      .then(
+        (data: { hits?: Array<{ id: string; title: string; url: string; type?: string; date?: string | null }> }) => {
+          const docs = (data.hits ?? []).filter(d => d.url);
+          const firstDoc = docs[0];
+          if (!firstDoc) return;
+          const baseUrl = firstDoc.url.replace(/^(https?:\/\/[^/]+).*/, '$1');
+          const urlToTitle = new Map(docs.map(d => [d.url, d.title]));
 
-        const pageDocs = docs.filter(d => d.type !== 'post');
-        const postDocs = docs.filter(d => d.type === 'post');
+          const pageDocs = docs.filter(d => d.type !== 'post');
+          const postDocs = docs.filter(d => d.type === 'post');
 
-        const pgTree: Record<string, PgNode> = Object.create(null);
+          const pgTree: Record<string, PgNode> = Object.create(null);
 
-        const slugTitle = (slug: string): string =>
-          slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-        const isAutoSlug = (slug: string): boolean => /^\d/.test(slug);
+          const slugTitle = (slug: string): string => slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          const isAutoSlug = (slug: string): boolean => /^\d/.test(slug);
 
-        // Two top-level buckets: normal tree + "(overige)" for auto-slugged pages
-        const overige: PgNode[] = [];
+          // Two top-level buckets: normal tree + "(overige)" for auto-slugged pages
+          const overige: PgNode[] = [];
 
-        const sorted = [...pageDocs].sort((a, b) => a.url.length - b.url.length);
-        for (const doc of sorted) {
-          const path = doc.url.slice(baseUrl.length).replace(/^\/|\/$/g, '');
-          if (!path) continue;
-          const segs = path.split('/');
-          const firstSeg = segs[0] ?? '';
+          const sorted = [...pageDocs].sort((a, b) => a.url.length - b.url.length);
+          for (const doc of sorted) {
+            const path = doc.url.slice(baseUrl.length).replace(/^\/|\/$/g, '');
+            if (!path) continue;
+            const segs = path.split('/');
+            const firstSeg = segs[0] ?? '';
 
-          // If any segment is an auto-slug, put in overige (top-level only: first segment)
-          if (isAutoSlug(firstSeg)) {
-            overige.push({ url: doc.url, title: doc.title || slugTitle(firstSeg), children: {} });
-            continue;
+            // If any segment is an auto-slug, put in overige (top-level only: first segment)
+            if (isAutoSlug(firstSeg)) {
+              overige.push({ url: doc.url, title: doc.title || slugTitle(firstSeg), children: {} });
+              continue;
+            }
+
+            let node = pgTree;
+            segs.forEach((slug, i) => {
+              let child = node[slug];
+              if (!child) {
+                const partUrl = `${baseUrl}/${segs.slice(0, i + 1).join('/')}/`;
+                child = node[slug] = {
+                  url: partUrl,
+                  title: urlToTitle.get(partUrl) ?? slugTitle(slug),
+                  children: Object.create(null),
+                };
+              }
+              node = child.children;
+            });
           }
 
-          let node = pgTree;
-          segs.forEach((slug, i) => {
-            let child = node[slug];
-            if (!child) {
-              const partUrl = `${baseUrl}/${segs.slice(0, i + 1).join('/')}/`;
-              child = node[slug] = { url: partUrl, title: urlToTitle.get(partUrl) ?? slugTitle(slug), children: Object.create(null) };
-            }
-            node = child.children;
-          });
-        }
-
-        // Add overige bucket if needed
-        if (overige.length) {
-          pgTree['__overige__'] = {
-            url: '',
-            title: '(overige)',
-            children: Object.fromEntries(overige.map((n, i) => [String(i), n])),
-          };
-        }
-
-        // Post tree: Jaar > Maand > Bericht, newest first
-        const monthNames = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
-        const postTree: Record<string, PgNode> = Object.create(null);
-        for (const doc of postDocs) {
-          const d = doc.date;
-          if (!d) continue;
-          const year = d.slice(0, 4);
-          const month = d.slice(5, 7);
-          if (!postTree[year]) postTree[year] = { url: '', title: year, children: Object.create(null) };
-          const yearNode = postTree[year];
-          if (!yearNode.children[month]) {
-            const label = monthNames[parseInt(month, 10) - 1] ?? month;
-            yearNode.children[month] = { url: '', title: label.charAt(0).toUpperCase() + label.slice(1), children: {} };
+          // Add overige bucket if needed
+          if (overige.length) {
+            pgTree['__overige__'] = {
+              url: '',
+              title: '(overige)',
+              children: Object.fromEntries(overige.map((n, i) => [String(i), n])),
+            };
           }
-          yearNode.children[month].children[`${d}_${doc.id}`] = { url: doc.url, title: doc.title || doc.url, children: {} };
-        }
-        const dateDesc = (a: [string, PgNode], b: [string, PgNode]): number => b[0].localeCompare(a[0]);
 
-        function renderPgNode(
-          tree: Record<string, PgNode>,
-          compareFn: (a: [string, PgNode], b: [string, PgNode]) => number = (a, b) => a[1].title.localeCompare(b[1].title, 'nl'),
-        ): HTMLUListElement {
-          const ul = document.createElement('ul');
-          ul.className = 'fav-col-tree';
-          for (const [, nd] of Object.entries(tree).sort(compareFn)) {
-            const hasChildren = Object.keys(nd.children).length > 0;
-            const li = document.createElement('li');
-            li.className = hasChildren ? 'fav-col-tree-folder' : 'fav-col-tree-leaf';
-            const row = document.createElement('div');
-            row.className = 'fav-col-tree-row';
-            if (hasChildren) {
-              li.classList.add('fav-col-tree-closed');
-              const tog = document.createElement('button');
-              tog.className = 'fav-col-tree-toggle';
-              tog.type = 'button';
-              tog.textContent = '▸';
-              tog.addEventListener('click', () => {
-                const closed = li.classList.toggle('fav-col-tree-closed');
-                tog.textContent = closed ? '▸' : '▾';
-              });
-              row.appendChild(tog);
+          // Post tree: Jaar > Maand > Bericht, newest first
+          const monthNames = [
+            'januari',
+            'februari',
+            'maart',
+            'april',
+            'mei',
+            'juni',
+            'juli',
+            'augustus',
+            'september',
+            'oktober',
+            'november',
+            'december',
+          ];
+          const postTree: Record<string, PgNode> = Object.create(null);
+          for (const doc of postDocs) {
+            const d = doc.date;
+            if (!d) continue;
+            const year = d.slice(0, 4);
+            const month = d.slice(5, 7);
+            if (!postTree[year]) postTree[year] = { url: '', title: year, children: Object.create(null) };
+            const yearNode = postTree[year];
+            if (!yearNode.children[month]) {
+              const label = monthNames[parseInt(month, 10) - 1] ?? month;
+              yearNode.children[month] = {
+                url: '',
+                title: label.charAt(0).toUpperCase() + label.slice(1),
+                children: {},
+              };
             }
-            const label = document.createElement('label');
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.checked = true;
-            cb.dataset['pageUrl'] = nd.url;
-            attachCycleCheckbox(
-              cb, li, hasChildren,
-              () => (pgTreeUl?.contains(li) ? pgTreeUl : postTreeUl),
-              applyPageFilter,
-              updatePgParents,
+            yearNode.children[month].children[`${d}_${doc.id}`] = {
+              url: doc.url,
+              title: doc.title || doc.url,
+              children: {},
+            };
+          }
+          const dateDesc = (a: [string, PgNode], b: [string, PgNode]): number => b[0].localeCompare(a[0]);
+
+          function renderPgNode(
+            tree: Record<string, PgNode>,
+            compareFn: (a: [string, PgNode], b: [string, PgNode]) => number = (a, b) =>
+              a[1].title.localeCompare(b[1].title, 'nl'),
+          ): HTMLUListElement {
+            const ul = document.createElement('ul');
+            ul.className = 'fav-col-tree';
+            for (const [, nd] of Object.entries(tree).sort(compareFn)) {
+              const hasChildren = Object.keys(nd.children).length > 0;
+              const li = document.createElement('li');
+              li.className = hasChildren ? 'fav-col-tree-folder' : 'fav-col-tree-leaf';
+              const row = document.createElement('div');
+              row.className = 'fav-col-tree-row';
+              if (hasChildren) {
+                li.classList.add('fav-col-tree-closed');
+                const tog = document.createElement('button');
+                tog.className = 'fav-col-tree-toggle';
+                tog.type = 'button';
+                tog.textContent = '▸';
+                tog.addEventListener('click', () => {
+                  const closed = li.classList.toggle('fav-col-tree-closed');
+                  tog.textContent = closed ? '▸' : '▾';
+                });
+                row.appendChild(tog);
+              }
+              const label = document.createElement('label');
+              const cb = document.createElement('input');
+              cb.type = 'checkbox';
+              cb.checked = true;
+              cb.dataset['pageUrl'] = nd.url;
+              attachCycleCheckbox(
+                cb,
+                li,
+                hasChildren,
+                () => (pgTreeUl?.contains(li) ? pgTreeUl : postTreeUl),
+                applyPageFilter,
+                updatePgParents,
+              );
+              label.appendChild(cb);
+              label.append(` ${nd.title}`);
+              row.appendChild(label);
+              li.appendChild(row);
+              if (hasChildren) li.appendChild(renderPgNode(nd.children, compareFn));
+              ul.appendChild(li);
+            }
+            return ul;
+          }
+
+          function updatePgParents(el: HTMLElement): void {
+            const folder = el.parentElement?.closest<HTMLElement>('.fav-col-tree-folder');
+            if (!folder) return;
+            const ownCb = folder.querySelector<HTMLInputElement>(':scope > .fav-col-tree-row input');
+            const allCbs = [...folder.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].filter(
+              c => c !== ownCb,
             );
-            label.appendChild(cb);
-            label.append(` ${nd.title}`);
-            row.appendChild(label);
-            li.appendChild(row);
-            if (hasChildren) li.appendChild(renderPgNode(nd.children, compareFn));
-            ul.appendChild(li);
+            if (ownCb && allCbs.length) {
+              const all = allCbs.every(c => c.checked),
+                none = allCbs.every(c => !c.checked);
+              ownCb.checked = all;
+              ownCb.indeterminate = !all && !none;
+            }
+            updatePgParents(folder);
           }
-          return ul;
-        }
 
-        function updatePgParents(el: HTMLElement): void {
-          const folder = el.parentElement?.closest<HTMLElement>('.fav-col-tree-folder');
-          if (!folder) return;
-          const ownCb = folder.querySelector<HTMLInputElement>(':scope > .fav-col-tree-row input');
-          const allCbs = [...folder.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].filter(c => c !== ownCb);
-          if (ownCb && allCbs.length) {
-            const all = allCbs.every(c => c.checked), none = allCbs.every(c => !c.checked);
-            ownCb.checked = all;
-            ownCb.indeterminate = !all && !none;
+          const built = renderPgNode(pgTree);
+          while (built.firstChild) pgTreeUl!.appendChild(built.firstChild);
+
+          if (postTreeUl) {
+            const builtPosts = renderPgNode(postTree, dateDesc);
+            while (builtPosts.firstChild) postTreeUl.appendChild(builtPosts.firstChild);
           }
-          updatePgParents(folder);
-        }
 
-        const built = renderPgNode(pgTree);
-        while (built.firstChild) pgTreeUl!.appendChild(built.firstChild);
-
-        if (postTreeUl) {
-          const builtPosts = renderPgNode(postTree, dateDesc);
-          while (builtPosts.firstChild) postTreeUl.appendChild(builtPosts.firstChild);
-        }
-
-        pageTreeData = pgTree;
-        if (pageBrowseGrid) renderPageBrowseLevel(pageBrowsePath);
-      })
+          pageTreeData = pgTree;
+          if (pageBrowseGrid) renderPageBrowseLevel(pageBrowsePath);
+        },
+      )
       .catch(() => undefined);
   }
 
@@ -590,7 +673,11 @@ function initInstance(cfg: FavConfig): void {
 
   // Collection tree from facets
   if (colTreeUl) {
-    searchIndex<{ facetDistribution?: Record<string, Record<string, number>> }>(cfg, cfg.mediaIndex, { q: '', limit: 0, facets: ['collection'] })
+    searchIndex<{ facetDistribution?: Record<string, Record<string, number>> }>(cfg, cfg.mediaIndex, {
+      q: '',
+      limit: 0,
+      facets: ['collection'],
+    })
       .then((data: { facetDistribution?: Record<string, Record<string, number>> }) => {
         const cols = data.facetDistribution?.['collection'];
         if (!cols) return;
@@ -607,7 +694,11 @@ function initInstance(cfg: FavConfig): void {
       const parts = path.split('/');
       let node = tree;
       parts.forEach((part, i) => {
-        const child = (node[part] ??= { _path: parts.slice(0, i + 1).join('/'), _count: 0, _children: Object.create(null) });
+        const child = (node[part] ??= {
+          _path: parts.slice(0, i + 1).join('/'),
+          _count: 0,
+          _children: Object.create(null),
+        });
         if (i === parts.length - 1) child._count = count;
         node = child._children;
       });
@@ -677,9 +768,14 @@ function initInstance(cfg: FavConfig): void {
   }
 
   function applyCollectionFilter(): void {
-    const allLeaves = [...(colTreeUl?.querySelectorAll<HTMLInputElement>('.fav-col-tree-leaf input[type=checkbox]') ?? [])];
+    const allLeaves = [
+      ...(colTreeUl?.querySelectorAll<HTMLInputElement>('.fav-col-tree-leaf input[type=checkbox]') ?? []),
+    ];
     const visibleLeaves = allLeaves.filter(cb => !cb.closest<HTMLElement>('.fav-col-tree-leaf')?.hidden);
-    const checked = visibleLeaves.filter(cb => cb.checked).map(cb => cb.dataset['leafPath']!).filter(Boolean);
+    const checked = visibleLeaves
+      .filter(cb => cb.checked)
+      .map(cb => cb.dataset['leafPath']!)
+      .filter(Boolean);
     const allChecked = checked.length === visibleLeaves.length;
 
     collectionFilter = allChecked
@@ -697,7 +793,9 @@ function initInstance(cfg: FavConfig): void {
     const term = this.value.toLowerCase();
     if (!filterTreeEl) return;
     if (!term) {
-      filterTreeEl.querySelectorAll<HTMLElement>('li').forEach(li => { li.hidden = false; });
+      filterTreeEl.querySelectorAll<HTMLElement>('li').forEach(li => {
+        li.hidden = false;
+      });
       return;
     }
     filterTreeEl.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(li => {
@@ -728,11 +826,22 @@ function initInstance(cfg: FavConfig): void {
 
       const fetchHits = (query: string, highlight: boolean): Promise<{ hits?: MeiliHit[] }> =>
         searchIndex(cfg, cfg.mediaIndex, {
-            q: query,
-            filter: `collection = ${quoteFilter(collection)}`,
-            limit: 5000,
-            attributesToRetrieve: ['id', 'url', 'source_url', 'title', 'page_number', 'date', 'text', 'collection', 'text_format', 'has_image'],
-            ...(highlight ? { attributesToHighlight: ['text'], highlightPreTag: '<em>', highlightPostTag: '</em>' } : {}),
+          q: query,
+          filter: `collection = ${quoteFilter(collection)}`,
+          limit: 5000,
+          attributesToRetrieve: [
+            'id',
+            'url',
+            'source_url',
+            'title',
+            'page_number',
+            'date',
+            'text',
+            'collection',
+            'text_format',
+            'has_image',
+          ],
+          ...(highlight ? { attributesToHighlight: ['text'], highlightPreTag: '<em>', highlightPostTag: '</em>' } : {}),
         });
 
       // Fetch every page of the document (so the lightbox can browse page by
@@ -742,7 +851,10 @@ function initInstance(cfg: FavConfig): void {
         .then(([allData, matchData]) => {
           const allHits = (allData.hits ?? []).filter(h => h.url);
           allHits.sort(compareHitOrder);
-          if (!allHits.length) { lb.close(); return; }
+          if (!allHits.length) {
+            lb.close();
+            return;
+          }
 
           const matchMap = new Map((matchData.hits ?? []).map(h => [h.id, h]));
 
@@ -755,19 +867,49 @@ function initInstance(cfg: FavConfig): void {
             const plainHtml = renderPlain(highlighted, true);
             const html = isMd ? mdHtml : plainHtml;
             const htmlAlt = highlighted ? (isMd ? plainHtml : mdHtml) : undefined;
-            const caption = (h.collection ?? '') + (h.page_number != null ? ` — pagina ${h.page_number}` : (h.title ? ` — ${h.title}` : ''));
+            const caption =
+              (h.collection ?? '') +
+              (h.page_number != null ? ` — pagina ${h.page_number}` : h.title ? ` — ${h.title}` : '');
             const isPdf = h.url.toLowerCase().split('?')[0]?.endsWith('.pdf') ?? false;
             const hasImage = h.has_image !== false;
             const highlightTerms = isMatch
-              ? Array.from(new Set(Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean)))
+              ? Array.from(
+                  new Set(
+                    Array.from(highlighted.matchAll(/<em>(.*?)<\/em>/gi), m => (m[1] ?? '').trim()).filter(Boolean),
+                  ),
+                )
               : [];
             return isPdf
-              ? { url: h.url, sourceUrl: h.source_url ?? undefined, caption, text: html, textAlt: htmlAlt, kind: 'pdf' as const, page: h.page_number ?? undefined, highlightTerms, isMatch, collection: h.collection, rawText: h.text }
-              : { url: h.url, caption, text: html, textAlt: htmlAlt, isMatch, collection: h.collection, rawText: h.text, page: h.page_number ?? undefined, ...(hasImage ? {} : { kind: 'text' as const }) };
+              ? {
+                  url: h.url,
+                  sourceUrl: h.source_url ?? undefined,
+                  caption,
+                  text: html,
+                  textAlt: htmlAlt,
+                  kind: 'pdf' as const,
+                  page: h.page_number ?? undefined,
+                  highlightTerms,
+                  isMatch,
+                  collection: h.collection,
+                  rawText: h.text,
+                }
+              : {
+                  url: h.url,
+                  caption,
+                  text: html,
+                  textAlt: htmlAlt,
+                  isMatch,
+                  collection: h.collection,
+                  rawText: h.text,
+                  page: h.page_number ?? undefined,
+                  ...(hasImage ? {} : { kind: 'text' as const }),
+                };
           });
 
           const startIdx = allHits.findIndex(h => h.id === hitId);
-          const focusSb = (): void => { root.querySelector<HTMLInputElement>('.ais-SearchBox-input')?.focus(); };
+          const focusSb = (): void => {
+            root.querySelector<HTMLInputElement>('.ais-SearchBox-input')?.focus();
+          };
           lb.open(items, startIdx < 0 ? 0 : startIdx, focusSb);
         })
         .catch(() => lb.close());

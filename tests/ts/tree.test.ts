@@ -4,17 +4,38 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // DOMContentLoaded, so this suite loads it once against a stubbed REST API.
 
 const ids = [
-  'fav-tree-root', 'fav-tree-selbar', 'fav-sel-count', 'fav-sel-move', 'fav-sel-clear',
-  'fav-tree-normalize', 'fav-normalize-apply', 'fav-normalize-panel', 'fav-normalize-list',
-  'fav-tree-remap', 'fav-remap-apply', 'fav-remap-panel', 'fav-remap-list',
-  'fav-tree-reindex', 'fav-tree-reindex-content', 'fav-index-stats', 'fav-stats-refresh',
-  'fav-idx-apply', 'fav-idx-msg', 'fav-doc-search', 'fav-doc-results', 'fav-doc-editor',
-  'fav-doc-save', 'fav-doc-save-msg', 'fav-doc-title',
+  'fav-tree-root',
+  'fav-tree-selbar',
+  'fav-sel-count',
+  'fav-sel-move',
+  'fav-sel-clear',
+  'fav-tree-normalize',
+  'fav-normalize-apply',
+  'fav-normalize-panel',
+  'fav-normalize-list',
+  'fav-tree-remap',
+  'fav-remap-apply',
+  'fav-remap-panel',
+  'fav-remap-list',
+  'fav-tree-reindex',
+  'fav-tree-reindex-content',
+  'fav-index-stats',
+  'fav-stats-refresh',
+  'fav-idx-apply',
+  'fav-idx-msg',
+  'fav-doc-search',
+  'fav-doc-results',
+  'fav-doc-editor',
+  'fav-doc-save',
+  'fav-doc-save-msg',
+  'fav-doc-title',
 ];
 const inputs = ['fav-idx-name', 'fav-doc-idx', 'fav-doc-q', 'fav-doc-id', 'fav-doc-text'];
 
 const tree = {
-  name: 'root', path: '', leaf: false,
+  name: 'root',
+  path: '',
+  leaf: false,
   children: [
     { name: 'a', path: 'a', leaf: false, children: [{ name: 'a1', path: 'a/a1', leaf: true, children: [] }] },
     { name: 'b', path: 'b', leaf: true, children: [] },
@@ -44,16 +65,18 @@ function dragStart(li: HTMLElement) {
 
 beforeAll(async () => {
   document.body.innerHTML =
-    ids.map(id => `<div id="${id}"></div>`).join('') +
-    inputs.map(id => `<input id="${id}">`).join('');
+    ids.map(id => `<div id="${id}"></div>`).join('') + inputs.map(id => `<input id="${id}">`).join('');
   (window as unknown as { favTree: unknown }).favTree = { root: '/wp-json/fav/v1/', nonce: 'nonce-1' };
 
-  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-    const endpoint = url.replace('/wp-json/fav/v1/', '');
-    calls.push({ endpoint, init });
-    if (failing.has(endpoint)) return new Response('kapot', { status: 500 });
-    return new Response(JSON.stringify(responses[endpoint] ?? {}), { status: 200 });
-  }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init: RequestInit) => {
+      const endpoint = url.replace('/wp-json/fav/v1/', '');
+      calls.push({ endpoint, init });
+      if (failing.has(endpoint)) return new Response('kapot', { status: 500 });
+      return new Response(JSON.stringify(responses[endpoint] ?? {}), { status: 200 });
+    }),
+  );
   vi.stubGlobal('alert', vi.fn());
 
   await import('../../src/ts/admin/tree');
