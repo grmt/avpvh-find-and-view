@@ -1,12 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { attachCycleCheckbox } from '../../src/ts/cycle-checkbox';
 
 // root
 // ├── a (folder)  ── a1, a2
 // └── b
 let root: HTMLElement;
-let onFilterChange: ReturnType<typeof vi.fn>;
-let updateParents: ReturnType<typeof vi.fn>;
+let onFilterChange: Mock<() => void>;
+let updateParents: Mock<(el: HTMLElement) => void>;
 const box = (id: string) => root.querySelector<HTMLInputElement>(`#${id}`)!;
 const state = () => ['a', 'a1', 'a2', 'b'].map(id => box(id).checked);
 
@@ -28,8 +28,8 @@ beforeEach(() => {
       <li id="li-b" class="fav-col-tree-leaf"><input type="checkbox" id="b"></li>
     </ul>`;
   root = document.getElementById('root')!;
-  onFilterChange = vi.fn();
-  updateParents = vi.fn();
+  onFilterChange = vi.fn<() => void>();
+  updateParents = vi.fn<(el: HTMLElement) => void>();
   attachCycleCheckbox(box('a'), document.getElementById('li-a')!, true, () => root, onFilterChange, updateParents);
   attachCycleCheckbox(box('b'), document.getElementById('li-b')!, false, () => root, onFilterChange, updateParents);
 });
