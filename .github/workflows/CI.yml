@@ -163,6 +163,18 @@ jobs:
         run: |
           node tests/ui-checks.mjs
 
+  # PHPUnit with coverage (Codecov) and SonarQube Cloud, shared with the other
+  # own plugins. Without SONAR_TOKEN the SonarQube Cloud job is skipped.
+  quality:
+    name: "Quality"
+    uses: grmt/wp-plugin-ci/.github/workflows/quality.yml@main
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+    with:
+      sonar-exclusions: "languages/**,local-ocr/**"
+
   # Shared with the other own plugins: dependencies on the PHP floor, syntax on
   # 8.4 and 8.5, PHPCompatibility and the WordPress.org Plugin Check.
   plugin-checks:

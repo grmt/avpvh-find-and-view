@@ -10,6 +10,11 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/CI.yml
+    # quality.yml uploads coverage with an OIDC token.
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
 
   release:
     name: Publish Release ZIP
