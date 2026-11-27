@@ -8,7 +8,8 @@ export function renderMarkdown(src: string): string {
     for (const attr of ['href', 'src']) {
       if (!el.hasAttribute(attr)) continue;
       const url = safeUrl(el.getAttribute(attr));
-      if (url) el.setAttribute(attr, url); else el.removeAttribute(attr);
+      if (url) el.setAttribute(attr, url);
+      else el.removeAttribute(attr);
     }
   });
   const container = document.createElement('div');
@@ -60,5 +61,8 @@ export function renderPlain(src: string, highlighted = false): string {
   // normal HTML text -- unlike markdown mode, where whitespace collapsing
   // is expected, plain text should render faithfully to what's on disk.
   const html = highlighted ? highlightHtml(src) : escapeHtml(src);
-  return html.split(/\n\n+/).map(p => `<p style="margin:0 0 .8em;white-space:pre-wrap">${p.replace(/\n/g, '<br>')}</p>`).join('');
+  return html
+    .split(/\n\n+/)
+    .map(p => `<p style="margin:0 0 .8em;white-space:pre-wrap">${p.replace(/\n/g, '<br>')}</p>`)
+    .join('');
 }

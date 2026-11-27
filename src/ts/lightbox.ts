@@ -115,9 +115,8 @@ export class Lightbox {
   private readonly fullscreenHandler = (): void => {
     const btn = this.el?.querySelector('.fav-lb-fullscreen');
     if (!btn) return;
-    btn.innerHTML = document.fullscreenElement === this.el
-      ? Lightbox.FULLSCREEN_EXIT_SVG
-      : Lightbox.FULLSCREEN_ENTER_SVG;
+    btn.innerHTML =
+      document.fullscreenElement === this.el ? Lightbox.FULLSCREEN_EXIT_SVG : Lightbox.FULLSCREEN_ENTER_SVG;
   };
 
   private readonly outsideClickHandler = (e: MouseEvent): void => {
@@ -157,10 +156,22 @@ export class Lightbox {
       const searchPanel = this.el.querySelector('.fav-lb-search-panel');
       const historyPanel = this.el.querySelector('.fav-lb-history-panel');
       const diffView = this.el.querySelector('.fav-lb-diff-view') as HTMLElement | null;
-      if (searchPanel?.classList.contains('fav-open')) { searchPanel.classList.remove('fav-open'); return; }
-      if (historyPanel?.classList.contains('fav-open')) { historyPanel.classList.remove('fav-open'); return; }
-      if (diffView && diffView.style.display !== 'none') { this.closeDiffView(); return; }
-      if (this.editing) { this.exitEditMode(); return; }
+      if (searchPanel?.classList.contains('fav-open')) {
+        searchPanel.classList.remove('fav-open');
+        return;
+      }
+      if (historyPanel?.classList.contains('fav-open')) {
+        historyPanel.classList.remove('fav-open');
+        return;
+      }
+      if (diffView && diffView.style.display !== 'none') {
+        this.closeDiffView();
+        return;
+      }
+      if (this.editing) {
+        this.exitEditMode();
+        return;
+      }
       this.close();
       return;
     }
@@ -410,7 +421,9 @@ export class Lightbox {
     this.el.querySelector('.fav-lb-search-btn')!.addEventListener('click', () => {
       this.el!.querySelector('.fav-lb-search-panel')!.classList.toggle('fav-open');
     });
-    this.el.querySelector('.fav-lb-replace-all-btn')!.addEventListener('click', () => void this.replaceAllInCollection());
+    this.el
+      .querySelector('.fav-lb-replace-all-btn')!
+      .addEventListener('click', () => void this.replaceAllInCollection());
     document.addEventListener('click', this.outsideClickHandler);
 
     this.el.querySelector('.fav-lb-fullscreen')!.addEventListener('click', () => {
@@ -421,10 +434,16 @@ export class Lightbox {
 
     const izBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-iz .fav-lb-zbtn'));
     izBtns[0]?.addEventListener('click', () => this.zoomTowardCenter(this.imgZoom / 1.3));
-    izBtns[1]?.addEventListener('click', () => { this.panX = 0; this.panY = 0; this.setImgZoom(1); });
+    izBtns[1]?.addEventListener('click', () => {
+      this.panX = 0;
+      this.panY = 0;
+      this.setImgZoom(1);
+    });
     izBtns[2]?.addEventListener('click', () => this.zoomTowardCenter(this.imgZoom * 1.3));
 
-    const tzBtns = Array.from(this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-text-bar .fav-lb-zbtn:not(.fav-lb-format-toggle)'));
+    const tzBtns = Array.from(
+      this.el.querySelectorAll<HTMLButtonElement>('.fav-lb-text-bar .fav-lb-zbtn:not(.fav-lb-format-toggle)'),
+    );
     tzBtns[0]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom / 1.2));
     tzBtns[1]?.addEventListener('click', () => this.setTxtZoom(1));
     tzBtns[2]?.addEventListener('click', () => this.setTxtZoom(this.txtZoom * 1.2));
@@ -453,25 +472,33 @@ export class Lightbox {
       window.open(Lightbox.openPdfHref(item), '_blank', 'noopener,noreferrer');
     });
 
-    this.el.querySelector('.fav-lb-img-wrap')!.addEventListener('wheel', (e: Event) => {
-      const we = e as WheelEvent;
-      if (we.ctrlKey) {
-        we.preventDefault();
-        this.zoomAt(this.imgZoom * (we.deltaY < 0 ? 1.1 : 0.9), we.clientX, we.clientY);
-      } else if (this.imgZoom > 1.01) {
-        we.preventDefault();
-        this.panX -= we.deltaX;
-        this.panY -= we.deltaY;
-        this.applyImgTransform();
-      }
-    }, { passive: false });
+    this.el.querySelector('.fav-lb-img-wrap')!.addEventListener(
+      'wheel',
+      (e: Event) => {
+        const we = e as WheelEvent;
+        if (we.ctrlKey) {
+          we.preventDefault();
+          this.zoomAt(this.imgZoom * (we.deltaY < 0 ? 1.1 : 0.9), we.clientX, we.clientY);
+        } else if (this.imgZoom > 1.01) {
+          we.preventDefault();
+          this.panX -= we.deltaX;
+          this.panY -= we.deltaY;
+          this.applyImgTransform();
+        }
+      },
+      { passive: false },
+    );
 
-    this.el.querySelector('.fav-lb-text-content')!.addEventListener('wheel', (e: Event) => {
-      const we = e as WheelEvent;
-      if (!we.ctrlKey) return;
-      we.preventDefault();
-      this.setTxtZoom(this.txtZoom * (we.deltaY < 0 ? 1.1 : 0.9));
-    }, { passive: false });
+    this.el.querySelector('.fav-lb-text-content')!.addEventListener(
+      'wheel',
+      (e: Event) => {
+        const we = e as WheelEvent;
+        if (!we.ctrlKey) return;
+        we.preventDefault();
+        this.setTxtZoom(this.txtZoom * (we.deltaY < 0 ? 1.1 : 0.9));
+      },
+      { passive: false },
+    );
 
     // Touch gestures on the image, mirroring the keyboard scheme: swipe
     // left/right pages, swipe up/down jumps to the next/previous search
@@ -491,43 +518,51 @@ export class Lightbox {
     const touchDist = (a: Touch, b: Touch): number => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
     const imgWrapEl = this.el.querySelector('.fav-lb-img-wrap')!;
 
-    imgWrapEl.addEventListener('touchstart', (e: Event) => {
-      const te = e as TouchEvent;
-      if (te.touches.length === 2) {
-        touchMode = 'pinch';
-        pinchStartDist = touchDist(te.touches[0]!, te.touches[1]!);
-        pinchStartZoom = this.imgZoom;
-      } else if (te.touches.length === 1) {
-        touchMode = 'swipe';
-        touchStartX = te.touches[0]!.clientX;
-        touchStartY = te.touches[0]!.clientY;
-        panStartX = this.panX;
-        panStartY = this.panY;
-      } else {
-        touchMode = 'none';
-      }
-    }, { passive: true });
+    imgWrapEl.addEventListener(
+      'touchstart',
+      (e: Event) => {
+        const te = e as TouchEvent;
+        if (te.touches.length === 2) {
+          touchMode = 'pinch';
+          pinchStartDist = touchDist(te.touches[0]!, te.touches[1]!);
+          pinchStartZoom = this.imgZoom;
+        } else if (te.touches.length === 1) {
+          touchMode = 'swipe';
+          touchStartX = te.touches[0]!.clientX;
+          touchStartY = te.touches[0]!.clientY;
+          panStartX = this.panX;
+          panStartY = this.panY;
+        } else {
+          touchMode = 'none';
+        }
+      },
+      { passive: true },
+    );
 
-    imgWrapEl.addEventListener('touchmove', (e: Event) => {
-      const te = e as TouchEvent;
-      if (touchMode === 'pinch' && te.touches.length === 2 && pinchStartDist > 0) {
-        e.preventDefault(); // suppress the browser's own page-pinch-zoom
-        const t0 = te.touches[0]!;
-        const t1 = te.touches[1]!;
-        const ratio = touchDist(t0, t1) / pinchStartDist;
-        this.zoomAt(pinchStartZoom * ratio, (t0.clientX + t1.clientX) / 2, (t0.clientY + t1.clientY) / 2);
-        return;
-      }
-      if (touchMode === 'swipe' && this.imgZoom > 1.01) {
-        e.preventDefault();
-        const touch = te.touches[0];
-        if (!touch) return;
-        imgWrapEl.classList.add('fav-lb-panning');
-        this.panX = panStartX + (touch.clientX - touchStartX);
-        this.panY = panStartY + (touch.clientY - touchStartY);
-        this.applyImgTransform();
-      }
-    }, { passive: false });
+    imgWrapEl.addEventListener(
+      'touchmove',
+      (e: Event) => {
+        const te = e as TouchEvent;
+        if (touchMode === 'pinch' && te.touches.length === 2 && pinchStartDist > 0) {
+          e.preventDefault(); // suppress the browser's own page-pinch-zoom
+          const t0 = te.touches[0]!;
+          const t1 = te.touches[1]!;
+          const ratio = touchDist(t0, t1) / pinchStartDist;
+          this.zoomAt(pinchStartZoom * ratio, (t0.clientX + t1.clientX) / 2, (t0.clientY + t1.clientY) / 2);
+          return;
+        }
+        if (touchMode === 'swipe' && this.imgZoom > 1.01) {
+          e.preventDefault();
+          const touch = te.touches[0];
+          if (!touch) return;
+          imgWrapEl.classList.add('fav-lb-panning');
+          this.panX = panStartX + (touch.clientX - touchStartX);
+          this.panY = panStartY + (touch.clientY - touchStartY);
+          this.applyImgTransform();
+        }
+      },
+      { passive: false },
+    );
 
     const touchEnd = (e: Event): void => {
       imgWrapEl.classList.remove('fav-lb-panning');
@@ -535,7 +570,10 @@ export class Lightbox {
         if ((e as TouchEvent).touches.length < 2) touchMode = 'none';
         return;
       }
-      if (touchMode !== 'swipe' || this.imgZoom > 1.01) { touchMode = 'none'; return; }
+      if (touchMode !== 'swipe' || this.imgZoom > 1.01) {
+        touchMode = 'none';
+        return;
+      }
       touchMode = 'none';
       const touch = (e as TouchEvent).changedTouches[0];
       if (!touch) return;
@@ -549,7 +587,14 @@ export class Lightbox {
       }
     };
     imgWrapEl.addEventListener('touchend', touchEnd, { passive: true });
-    imgWrapEl.addEventListener('touchcancel', () => { touchMode = 'none'; imgWrapEl.classList.remove('fav-lb-panning'); }, { passive: true });
+    imgWrapEl.addEventListener(
+      'touchcancel',
+      () => {
+        touchMode = 'none';
+        imgWrapEl.classList.remove('fav-lb-panning');
+      },
+      { passive: true },
+    );
 
     // Mouse drag-to-pan, active only while zoomed in. pointerType is checked
     // so this doesn't double-handle touch input, which the handlers above
@@ -606,8 +651,13 @@ export class Lightbox {
 
   private applySplitFrac(frac: number): void {
     const textWrap = this.el!.querySelector('.fav-lb-text-wrap') as HTMLElement;
-    if (Lightbox.isLandscape()) { textWrap.style.width = `${frac * 100}%`; textWrap.style.height = ''; }
-    else { textWrap.style.height = `${frac * 100}%`; textWrap.style.width = ''; }
+    if (Lightbox.isLandscape()) {
+      textWrap.style.width = `${frac * 100}%`;
+      textWrap.style.height = '';
+    } else {
+      textWrap.style.height = `${frac * 100}%`;
+      textWrap.style.width = '';
+    }
   }
 
   // Re-applies the saved (or CSS-default) split — used whenever an item with
@@ -675,7 +725,13 @@ export class Lightbox {
       if ((pe.target as HTMLElement).closest('.fav-lb-crop-tools, .fav-lb-crop-result, .fav-lb-iz')) return;
       const rect = imgOuterEl.getBoundingClientRect();
       this.cropDragStart = { x: pe.clientX - rect.left, y: pe.clientY - rect.top };
-      Object.assign(cropRectEl.style, { left: `${this.cropDragStart.x}px`, top: `${this.cropDragStart.y}px`, width: '0px', height: '0px', display: 'block' });
+      Object.assign(cropRectEl.style, {
+        left: `${this.cropDragStart.x}px`,
+        top: `${this.cropDragStart.y}px`,
+        width: '0px',
+        height: '0px',
+        display: 'block',
+      });
       imgOuterEl.setPointerCapture(pe.pointerId);
       e.preventDefault();
     });
@@ -700,7 +756,10 @@ export class Lightbox {
       void this.finishCropSelection();
     };
     imgOuterEl.addEventListener('pointerup', finishCropDrag);
-    imgOuterEl.addEventListener('pointercancel', () => { this.cropDragStart = null; cropRectEl.style.display = 'none'; });
+    imgOuterEl.addEventListener('pointercancel', () => {
+      this.cropDragStart = null;
+      cropRectEl.style.display = 'none';
+    });
 
     el.querySelector('.fav-lb-crop-close')!.addEventListener('click', () => {
       (el.querySelector('.fav-lb-crop-result') as HTMLElement).style.display = 'none';
@@ -712,7 +771,12 @@ export class Lightbox {
       const ta = this.editTextarea();
       const start = ta.selectionStart;
       const end = ta.selectionEnd;
-      this.setTextareaValue(ta, ta.value.slice(0, start) + cropText + ta.value.slice(end), start, start + cropText.length);
+      this.setTextareaValue(
+        ta,
+        ta.value.slice(0, start) + cropText + ta.value.slice(end),
+        start,
+        start + cropText.length,
+      );
       (el.querySelector('.fav-lb-crop-result') as HTMLElement).style.display = 'none';
     });
   }
@@ -755,9 +819,13 @@ export class Lightbox {
     }
 
     const { ok, data } = await this.restPost<{ text?: string; crop_img_url?: string; engine?: string }>(
-      'scan/crop-ocr', { collection: item.collection, page_number: item.page, crop: { x, y, w, h }, engine },
+      'scan/crop-ocr',
+      { collection: item.collection, page_number: item.page, crop: { x, y, w, h }, engine },
     );
-    if (!ok) { statusEl.textContent = data.message || 'OCR mislukt.'; return; }
+    if (!ok) {
+      statusEl.textContent = data.message || 'OCR mislukt.';
+      return;
+    }
     previewEl.src = data.crop_img_url ?? '';
     titleEl.textContent = `OCR-resultaat (${data.engine === 'tesseract' ? 'Tesseract' : 'Document AI'})`;
     textEl.value = data.text ?? '';
@@ -771,29 +839,54 @@ export class Lightbox {
   // http://localhost from the mixed-content block even on an https page,
   // so this needs no tunnel or VPN, just docling-serve actually running.
   private async runLocalOcr(
-    imgEl: HTMLImageElement, x: number, y: number, w: number, h: number,
-    previewEl: HTMLImageElement, textEl: HTMLTextAreaElement, statusEl: HTMLElement, titleEl: HTMLElement,
+    imgEl: HTMLImageElement,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    previewEl: HTMLImageElement,
+    textEl: HTMLTextAreaElement,
+    statusEl: HTMLElement,
+    titleEl: HTMLElement,
   ): Promise<void> {
     const rawUrl = (this.el!.querySelector('.fav-lb-crop-local-url') as HTMLInputElement).value.trim();
-    if (!rawUrl) { statusEl.textContent = 'Vul eerst het adres van docling-serve in.'; return; }
+    if (!rawUrl) {
+      statusEl.textContent = 'Vul eerst het adres van docling-serve in.';
+      return;
+    }
     const url = safeLocalOcrUrl(rawUrl);
-    if (!url) { statusEl.textContent = 'Alleen lokale adressen (localhost of 127.0.0.1) zijn toegestaan voor lokale OCR.'; return; }
+    if (!url) {
+      statusEl.textContent = 'Alleen lokale adressen (localhost of 127.0.0.1) zijn toegestaan voor lokale OCR.';
+      return;
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(imgEl.naturalWidth * w));
     canvas.height = Math.max(1, Math.round(imgEl.naturalHeight * h));
     const ctx = canvas.getContext('2d');
-    if (!ctx) { statusEl.textContent = 'Kon selectie niet uitsnijden.'; return; }
+    if (!ctx) {
+      statusEl.textContent = 'Kon selectie niet uitsnijden.';
+      return;
+    }
     ctx.drawImage(
       imgEl,
-      imgEl.naturalWidth * x, imgEl.naturalHeight * y, canvas.width, canvas.height,
-      0, 0, canvas.width, canvas.height,
+      imgEl.naturalWidth * x,
+      imgEl.naturalHeight * y,
+      canvas.width,
+      canvas.height,
+      0,
+      0,
+      canvas.width,
+      canvas.height,
     );
     previewEl.src = canvas.toDataURL('image/png');
     titleEl.textContent = 'OCR-resultaat (lokale Docker — Docling)';
 
     const blob: Blob | null = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-    if (!blob) { statusEl.textContent = 'Kon selectie niet uitsnijden.'; return; }
+    if (!blob) {
+      statusEl.textContent = 'Kon selectie niet uitsnijden.';
+      return;
+    }
 
     const form = new FormData();
     form.append('files', blob, 'crop.png');
@@ -802,8 +895,14 @@ export class Lightbox {
 
     try {
       const res = await fetch(url, { method: 'POST', body: form });
-      const resJson = await res.json().catch(() => ({})) as { document?: { md_content?: string; text_content?: string }; detail?: string };
-      if (!res.ok) { statusEl.textContent = resJson.detail || 'Lokale OCR mislukt.'; return; }
+      const resJson = (await res.json().catch(() => ({}))) as {
+        document?: { md_content?: string; text_content?: string };
+        detail?: string;
+      };
+      if (!res.ok) {
+        statusEl.textContent = resJson.detail || 'Lokale OCR mislukt.';
+        return;
+      }
       textEl.value = (resJson.document?.md_content || resJson.document?.text_content || '').trim();
       statusEl.textContent = '';
     } catch {
@@ -826,9 +925,7 @@ export class Lightbox {
       if (!resizer.hasPointerCapture(e.pointerId)) return;
       const rect = body.getBoundingClientRect();
       const landscape = Lightbox.isLandscape();
-      const raw = landscape
-        ? (rect.right - e.clientX) / rect.width
-        : (rect.bottom - e.clientY) / rect.height;
+      const raw = landscape ? (rect.right - e.clientX) / rect.width : (rect.bottom - e.clientY) / rect.height;
       const frac = Math.max(0.15, Math.min(0.8, raw));
       this.applySplitFrac(frac);
       localStorage.setItem(Lightbox.splitStorageKey(), String(frac));
@@ -877,7 +974,9 @@ export class Lightbox {
     document.removeEventListener('click', this.outsideClickHandler);
     this.pageImageCache.forEach(url => URL.revokeObjectURL(url));
     this.pageImageCache.clear();
-    this.pdfDocs.forEach(task => { void task.destroy().catch(() => undefined); });
+    this.pdfDocs.forEach(task => {
+      void task.destroy().catch(() => undefined);
+    });
     this.pdfDocs.clear();
     this.onClose?.();
   }
@@ -909,9 +1008,12 @@ export class Lightbox {
     const isEditablePage = item.collection != null && item.page != null;
     const editBtn = el.querySelector('.fav-lb-edit') as HTMLButtonElement;
     editBtn.style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
-    (el.querySelector('.fav-lb-history-wrap') as HTMLElement).style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
-    (el.querySelector('.fav-lb-delete-page') as HTMLElement).style.display = this.cfg.canEdit && isEditablePage ? '' : 'none';
-    (el.querySelector('.fav-lb-consolidate') as HTMLElement).style.display = this.cfg.canEdit && item.collection != null ? '' : 'none';
+    (el.querySelector('.fav-lb-history-wrap') as HTMLElement).style.display =
+      this.cfg.canEdit && isEditablePage ? '' : 'none';
+    (el.querySelector('.fav-lb-delete-page') as HTMLElement).style.display =
+      this.cfg.canEdit && isEditablePage ? '' : 'none';
+    (el.querySelector('.fav-lb-consolidate') as HTMLElement).style.display =
+      this.cfg.canEdit && item.collection != null ? '' : 'none';
     (el.querySelector('.fav-lb-search-wrap') as HTMLElement).style.display = item.collection != null ? '' : 'none';
     (el.querySelector('.fav-lb-search-replace-row') as HTMLElement).style.display = this.cfg.canEdit ? '' : 'none';
 
@@ -962,7 +1064,10 @@ export class Lightbox {
         this.renderPdfPage(safeUrl(item.url), item.page, item.highlightTerms ?? [])
           .then(({ blobUrl, rects }) => {
             if (token !== this.showToken) return; // superseded by newer navigation
-            if (!blobUrl) { loadingEl.textContent = 'Kon PDF-pagina niet laden.'; return; }
+            if (!blobUrl) {
+              loadingEl.textContent = 'Kon PDF-pagina niet laden.';
+              return;
+            }
             this.highlightRects = rects;
             this.setImage(blobUrl);
             imgEl.style.display = '';
@@ -997,8 +1102,9 @@ export class Lightbox {
     matchNavEl.style.display = matchCount > 0 ? 'flex' : 'none';
     if (matchCount > 0) {
       const matchPos = this.items.slice(0, this.idx + 1).filter(it => it.isMatch).length;
-      el.querySelector('.fav-lb-match-counter')!.textContent =
-        item.isMatch ? `${matchPos}/${matchCount}` : `${matchCount}`;
+      el.querySelector('.fav-lb-match-counter')!.textContent = item.isMatch
+        ? `${matchPos}/${matchCount}`
+        : `${matchCount}`;
       (el.querySelector('.fav-lb-prev-match') as HTMLButtonElement).disabled = this.findMatchIdx(-1) < 0;
       (el.querySelector('.fav-lb-next-match') as HTMLButtonElement).disabled = this.findMatchIdx(1) < 0;
     }
@@ -1064,7 +1170,7 @@ export class Lightbox {
         headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
         body: JSON.stringify({ collection: item.collection, page_number: item.page, text: textarea.value }),
       });
-      const data = await res.json().catch(() => ({})) as { text?: string; text_format?: string; message?: string };
+      const data = (await res.json().catch(() => ({}))) as { text?: string; text_format?: string; message?: string };
       if (!res.ok) {
         statusEl.textContent = data.message || 'Opslaan mislukt.';
         return;
@@ -1104,9 +1210,10 @@ export class Lightbox {
 
     if (engine === 'local') {
       const imgEl = el.querySelector('.fav-lb-img') as HTMLImageElement;
-      const rawUrl = (el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement)?.value.trim()
-        || localStorage.getItem('avpvhFavLocalOcrUrl')
-        || 'http://localhost:5001/v1/convert/file';
+      const rawUrl =
+        (el.querySelector('.fav-lb-crop-local-url') as HTMLInputElement)?.value.trim() ||
+        localStorage.getItem('avpvhFavLocalOcrUrl') ||
+        'http://localhost:5001/v1/convert/file';
       const url = safeLocalOcrUrl(rawUrl);
       if (!url) {
         statusEl.textContent = 'Alleen lokale adressen (localhost of 127.0.0.1) zijn toegestaan voor lokale OCR.';
@@ -1140,7 +1247,7 @@ export class Lightbox {
 
       try {
         const res = await fetch(url, { method: 'POST', body: form });
-        const resJson = await res.json().catch(() => ({})) as {
+        const resJson = (await res.json().catch(() => ({}))) as {
           document?: { md_content?: string; text_content?: string };
           detail?: string;
         };
@@ -1165,7 +1272,7 @@ export class Lightbox {
         headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
         body: JSON.stringify({ collection: item.collection, page_number: item.page, engine }),
       });
-      const data = await res.json().catch(() => ({})) as { text?: string; message?: string };
+      const data = (await res.json().catch(() => ({}))) as { text?: string; message?: string };
       if (!res.ok) {
         statusEl.textContent = data.message || 'OCR mislukt.';
         return;
@@ -1193,7 +1300,11 @@ export class Lightbox {
   }
 
   // Wraps the selection in a markdown marker (**bold**, *italic*,
-  // ~~strikethrough~~); toggles it off if the selection is already wrapped.
+  // ~~strikethrough~~), or removes it when the selection is already wrapped:
+  // either the markers sit just outside the selection (as right after
+  // wrapping, which selects the text inside) or the selection includes them.
+  // Asterisks are counted so bold and italic stay apart: a run of 1 or 3 is
+  // italic, a run of 2 or 3 is bold (*** is both).
   private wrapSelection(marker: string): void {
     const ta = this.editTextarea();
     const start = ta.selectionStart;
@@ -1201,13 +1312,37 @@ export class Lightbox {
     const selected = ta.value.slice(start, end);
     const before = ta.value.slice(0, start);
     const after = ta.value.slice(end);
+    const len = marker.length;
 
-    if (selected.length >= marker.length * 2 && selected.startsWith(marker) && selected.endsWith(marker)) {
-      const inner = selected.slice(marker.length, selected.length - marker.length);
+    if (Lightbox.isWrapped(marker, Lightbox.markerRun(before, after, marker[0]!))) {
+      this.setTextareaValue(ta, before.slice(0, -len) + selected + after.slice(len), start - len, end - len);
+    } else if (
+      selected.length >= len * 2 &&
+      Lightbox.isWrapped(marker, Lightbox.markerRun(selected, selected, marker[0]!, true))
+    ) {
+      const inner = selected.slice(len, selected.length - len);
       this.setTextareaValue(ta, before + inner + after, start, start + inner.length);
     } else {
-      this.setTextareaValue(ta, before + marker + selected + marker + after, start + marker.length, end + marker.length);
+      this.setTextareaValue(ta, before + marker + selected + marker + after, start + len, end + len);
     }
+  }
+
+  // How many marker characters enclose a selection on both sides: at the end
+  // of `left` and the start of `right` (around it), or with `inside`, at the
+  // start of `left` and the end of `right` (the selection's own edges).
+  private static markerRun(left: string, right: string, char: string, inside = false): number {
+    const count = (text: string, fromEnd: boolean): number => {
+      let n = 0;
+      while (n < text.length && text[fromEnd ? text.length - 1 - n : n] === char) n++;
+      return n;
+    };
+    return inside ? Math.min(count(left, false), count(right, true)) : Math.min(count(left, true), count(right, false));
+  }
+
+  private static isWrapped(marker: string, run: number): boolean {
+    if (marker === '*') return run % 2 === 1;
+    if (marker === '**') return run >= 2;
+    return run >= marker.length;
   }
 
   // Toggles a "## " prefix on the line the cursor/selection starts on.
@@ -1221,7 +1356,12 @@ export class Lightbox {
     if (lineEnd === -1) lineEnd = ta.value.length;
     const line = ta.value.slice(lineStart, lineEnd);
     const newLine = /^#{1,6}\s/.test(line) ? line.replace(/^#{1,6}\s+/, '') : `## ${line}`;
-    this.setTextareaValue(ta, ta.value.slice(0, lineStart) + newLine + ta.value.slice(lineEnd), lineStart, lineStart + newLine.length);
+    this.setTextareaValue(
+      ta,
+      ta.value.slice(0, lineStart) + newLine + ta.value.slice(lineEnd),
+      lineStart,
+      lineStart + newLine.length,
+    );
   }
 
   // Joins hard-wrapped lines within the selection (or, with no selection,
@@ -1247,7 +1387,14 @@ export class Lightbox {
       // left over from column-aligned OCR source layout — a plain <textarea>
       // shows those literally (unlike the rendered read-only view, where
       // HTML's default whitespace collapsing already hides them).
-      .map(block => block.split('\n').map(l => l.trim()).filter(Boolean).join(' ').replace(/ {2,}/g, ' '))
+      .map(block =>
+        block
+          .split('\n')
+          .map(l => l.trim())
+          .filter(Boolean)
+          .join(' ')
+          .replace(/ {2,}/g, ' '),
+      )
       .join('\n\n');
     this.setTextareaValue(ta, ta.value.slice(0, start) + joined + ta.value.slice(end), start, start + joined.length);
   }
@@ -1261,19 +1408,30 @@ export class Lightbox {
     const selected = ta.value.slice(start, end);
     if (!selected.trim()) return;
 
+    // Pipes and tabs both separate cells (a tab next to a pipe counts once,
+    // so "a\t|b" is two cells); a line with neither is split on runs of two
+    // or more spaces. Outer pipes don't make empty edge cells, but "| |"
+    // inside a row is a real empty cell.
     const splitLine = (l: string): string[] => {
       const trimmed = l.trim();
-      if (trimmed.includes('|')) {
-        return trimmed.split('|').map(c => c.trim()).filter((c, i, arr) => c !== '' || (i !== 0 && i !== arr.length - 1));
-      }
-      if (trimmed.includes('\t')) return trimmed.split('\t').map(c => c.trim());
-      return trimmed.split(/ {2,}/).map(c => c.trim());
+      if (!/[|\t]/.test(trimmed)) return trimmed.split(/ {2,}/);
+      const cells = trimmed.split(/[ \t]*\|[ \t]*|[ \t]*\t[ \t]*/).map(c => c.trim());
+      if (trimmed.startsWith('|')) cells.shift();
+      if (trimmed.endsWith('|')) cells.pop();
+      return cells;
     };
 
-    const rows = selected.split('\n').map(l => l.trim()).filter(Boolean).map(splitLine);
+    const rows = selected
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .map(splitLine);
     if (!rows.length) return;
     const cols = Math.max(...rows.map(r => r.length));
-    const pad = (r: string[]): string[] => { while (r.length < cols) r.push(''); return r; };
+    const pad = (r: string[]): string[] => {
+      while (r.length < cols) r.push('');
+      return r;
+    };
     const header = pad(rows[0]!);
     const body = rows.slice(1).map(pad);
     const md = [
@@ -1285,13 +1443,16 @@ export class Lightbox {
     this.setTextareaValue(ta, ta.value.slice(0, start) + md + ta.value.slice(end), start, start + md.length);
   }
 
-  private async restPost<T extends object>(path: string, body: unknown): Promise<{ ok: boolean; data: T & { message?: string } }> {
+  private async restPost<T extends object>(
+    path: string,
+    body: unknown,
+  ): Promise<{ ok: boolean; data: T & { message?: string } }> {
     const res = await fetch(`${this.cfg.restRoot}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': this.cfg.editNonce },
       body: JSON.stringify(body),
     });
-    const data = await res.json().catch(() => ({})) as T & { message?: string };
+    const data = (await res.json().catch(() => ({}))) as T & { message?: string };
     return { ok: res.ok, data };
   }
 
@@ -1305,15 +1466,18 @@ export class Lightbox {
     const item = this.items[this.idx];
     if (!item || item.collection == null || item.page == null) return;
 
-    const { ok, data } = await this.restPost<{ versions: Array<{ version: number; exists: boolean; mtime: string | null }> }>(
-      'scan/history', { collection: item.collection, page_number: item.page },
-    );
+    const { ok, data } = await this.restPost<{
+      versions: Array<{ version: number; exists: boolean; mtime: string | null }>;
+    }>('scan/history', { collection: item.collection, page_number: item.page });
     if (!ok || !data.versions) return;
 
-    panel.innerHTML = data.versions.map(v => v.exists
-      ? `<div class="fav-lb-history-row"><span>.bak${escapeHtml(v.version)}${v.version === 1 ? ' (meest recent)' : ''} — ${escapeHtml(v.mtime)}</span><button type="button" class="fav-lb-btn fav-lb-history-diff-btn" data-version="${escapeHtml(v.version)}">Diff</button></div>`
-      : `<div class="fav-lb-history-row fav-lb-history-empty"><span>.bak${escapeHtml(v.version)} — (geen back-up)</span></div>`,
-    ).join('');
+    panel.innerHTML = data.versions
+      .map(v =>
+        v.exists
+          ? `<div class="fav-lb-history-row"><span>.bak${escapeHtml(v.version)}${v.version === 1 ? ' (meest recent)' : ''} — ${escapeHtml(v.mtime)}</span><button type="button" class="fav-lb-btn fav-lb-history-diff-btn" data-version="${escapeHtml(v.version)}">Diff</button></div>`
+          : `<div class="fav-lb-history-row fav-lb-history-empty"><span>.bak${escapeHtml(v.version)} — (geen back-up)</span></div>`,
+      )
+      .join('');
     panel.querySelectorAll<HTMLButtonElement>('.fav-lb-history-diff-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         panel.classList.remove('fav-open');
@@ -1329,9 +1493,11 @@ export class Lightbox {
     if (!item || item.collection == null || item.page == null) return;
     if (!this.editing) this.enterEditMode();
 
-    const { ok, data } = await this.restPost<{ old_text?: string; new_text?: string }>(
-      'scan/diff', { collection: item.collection, page_number: item.page, version },
-    );
+    const { ok, data } = await this.restPost<{ old_text?: string; new_text?: string }>('scan/diff', {
+      collection: item.collection,
+      page_number: item.page,
+      version,
+    });
     if (!ok || data.old_text == null) return;
 
     const textarea = el.querySelector('.fav-lb-edit-textarea') as HTMLTextAreaElement;
@@ -1354,26 +1520,34 @@ export class Lightbox {
     if (!item || item.collection == null || item.page == null) return;
     const ok = confirm(
       `Pagina ${item.page} verwijderen?\n` +
-      `Het bestand wordt verplaatst naar de submap 'verwijderd' (niet permanent gewist) ` +
-      `en latere pagina's schuiven een nummer terug.`,
+        `Het bestand wordt verplaatst naar de submap 'verwijderd' (niet permanent gewist) ` +
+        `en latere pagina's schuiven een nummer terug.`,
     );
     if (!ok) return;
 
     const collection = item.collection;
     const pageNum = item.page;
     const { ok: reqOk, data } = await this.restPost<object>('scan/delete', { collection, page_number: pageNum });
-    if (!reqOk) { alert((data as { message?: string }).message || 'Verwijderen mislukt.'); return; }
+    if (!reqOk) {
+      alert((data as { message?: string }).message || 'Verwijderen mislukt.');
+      return;
+    }
 
     // Reflect the server-side renumbering locally instead of re-fetching the
     // whole collection: drop this item, shift every later page in the same
     // collection down by one.
     this.items = this.items
       .filter((_, i) => i !== this.idx)
-      .map(it => (it.collection === collection && it.page != null && it.page > pageNum)
-        ? { ...it, page: it.page - 1, caption: it.caption.replace(/pagina \d+/i, `pagina ${it.page - 1}`) }
-        : it);
+      .map(it =>
+        it.collection === collection && it.page != null && it.page > pageNum
+          ? { ...it, page: it.page - 1, caption: it.caption.replace(/pagina \d+/i, `pagina ${it.page - 1}`) }
+          : it,
+      );
 
-    if (!this.items.length) { this.close(); return; }
+    if (!this.items.length) {
+      this.close();
+      return;
+    }
     this.show(Math.min(this.idx, this.items.length - 1));
   }
 
@@ -1382,22 +1556,29 @@ export class Lightbox {
     if (!item || item.collection == null) return;
     const ok = confirm(
       `consolidated_extracted_text.txt opnieuw genereren voor "${item.collection}"?\n` +
-      `De huidige inhoud van dat bestand wordt overschreven.`,
+        `De huidige inhoud van dat bestand wordt overschreven.`,
     );
     if (!ok) return;
 
-    const { ok: reqOk, data } = await this.restPost<{ pages?: number }>('scan/consolidate', { collection: item.collection });
-    alert(reqOk ? `Overzicht bijgewerkt (${data.pages ?? 0} pagina's).` : (data.message || 'Genereren mislukt.'));
+    const { ok: reqOk, data } = await this.restPost<{ pages?: number }>('scan/consolidate', {
+      collection: item.collection,
+    });
+    alert(reqOk ? `Overzicht bijgewerkt (${data.pages ?? 0} pagina's).` : data.message || 'Genereren mislukt.');
   }
 
   private async runCollectionSearch(query: string): Promise<void> {
     const el = this.el!;
     const resultsEl = el.querySelector('.fav-lb-search-results') as HTMLElement;
     const item = this.items[this.idx];
-    if (query.length < 2 || item?.collection == null) { resultsEl.innerHTML = ''; return; }
+    if (query.length < 2 || item?.collection == null) {
+      resultsEl.innerHTML = '';
+      return;
+    }
 
     const data = await meiliSearch<{ hits?: Array<{ page_number?: number; _formatted?: { text?: string } }> }>(
-      this.cfg, this.cfg.mediaIndex, {
+      this.cfg,
+      this.cfg.mediaIndex,
+      {
         q: query,
         filter: `collection = ${quoteFilter(item.collection)}`,
         limit: 30,
@@ -1408,18 +1589,26 @@ export class Lightbox {
       },
     );
 
-    if (!data) { resultsEl.innerHTML = '<div class="fav-lb-search-empty">Zoeken mislukt.</div>'; return; }
+    if (!data) {
+      resultsEl.innerHTML = '<div class="fav-lb-search-empty">Zoeken mislukt.</div>';
+      return;
+    }
 
     const hits = data.hits ?? [];
     if (!hits.length) {
       resultsEl.innerHTML = '<div class="fav-lb-search-empty">Geen resultaten.</div>';
       return;
     }
-    resultsEl.innerHTML = DOMPurify.sanitize(hits.map(h =>
-      `<button type="button" class="fav-lb-search-result" data-page="${escapeHtml(h.page_number)}">` +
-      `<span class="fav-lb-search-result-label">Pagina ${escapeHtml(h.page_number ?? '?')}</span>` +
-      `<span class="fav-lb-search-result-snippet">${highlightHtml(h._formatted?.text)}</span></button>`,
-    ).join(''));
+    resultsEl.innerHTML = DOMPurify.sanitize(
+      hits
+        .map(
+          h =>
+            `<button type="button" class="fav-lb-search-result" data-page="${escapeHtml(h.page_number)}">` +
+            `<span class="fav-lb-search-result-label">Pagina ${escapeHtml(h.page_number ?? '?')}</span>` +
+            `<span class="fav-lb-search-result-snippet">${highlightHtml(h._formatted?.text)}</span></button>`,
+        )
+        .join(''),
+    );
     resultsEl.querySelectorAll<HTMLButtonElement>('.fav-lb-search-result').forEach(btn => {
       const pageNum = Number(btn.dataset['page']);
       btn.addEventListener('click', () => {
@@ -1444,15 +1633,21 @@ export class Lightbox {
 
     const ok = confirm(
       `"${query}" vervangen door "${replacement}" in alle pagina's van "${item.collection}" op de server?\n` +
-      `Dit kan niet ongedaan gemaakt worden via de editor (wel via de .bak-bestanden per pagina).`,
+        `Dit kan niet ongedaan gemaakt worden via de editor (wel via de .bak-bestanden per pagina).`,
     );
     if (!ok) return;
 
     const { ok: reqOk, data } = await this.restPost<{ total_replacements?: number; pages_changed?: string[] }>(
-      'scan/replace', { collection: item.collection, query, replacement, regex, case_sensitive: caseSensitive, whole_word: wholeWord },
+      'scan/replace',
+      { collection: item.collection, query, replacement, regex, case_sensitive: caseSensitive, whole_word: wholeWord },
     );
-    if (!reqOk) { alert(data.message || 'Vervangen mislukt.'); return; }
-    alert(`${data.total_replacements ?? 0} vervanging(en) doorgevoerd in ${data.pages_changed?.length ?? 0} pagina('s).`);
+    if (!reqOk) {
+      alert(data.message || 'Vervangen mislukt.');
+      return;
+    }
+    alert(
+      `${data.total_replacements ?? 0} vervanging(en) doorgevoerd in ${data.pages_changed?.length ?? 0} pagina('s).`,
+    );
 
     if (data.pages_changed && data.pages_changed.length > 0) this.show(this.idx);
   }
@@ -1463,7 +1658,9 @@ export class Lightbox {
   }
 
   private async renderPdfPage(
-    url: string, pageNum: number, terms: string[],
+    url: string,
+    pageNum: number,
+    terms: string[],
   ): Promise<{ blobUrl: string | null; rects: HighlightRect[] }> {
     try {
       let task = this.pdfDocs.get(url);
@@ -1519,7 +1716,9 @@ export class Lightbox {
   // through the same viewport used for rendering, as fractions of the page
   // so positioning survives zoom/resize without re-running this lookup.
   private async findHighlightRects(
-    page: pdfjsLib.PDFPageProxy, viewport: pdfjsLib.PageViewport, terms: string[],
+    page: pdfjsLib.PDFPageProxy,
+    viewport: pdfjsLib.PageViewport,
+    terms: string[],
   ): Promise<HighlightRect[]> {
     const lowerTerms = terms.map(t => t.toLowerCase()).filter(Boolean);
     if (!lowerTerms.length) return [];

@@ -4,7 +4,9 @@ export async function proxySearch(cfg: SearchConfig, queries: object[]): Promise
   const proxy = cfg.searchProxy;
   if (!proxy) throw new Error('Missing search proxy');
   const res = await fetch(proxy.url, {
-    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': proxy.nonce },
     body: JSON.stringify({ queries, indexes: proxy.indexes, group: proxy.group, scopeNonce: proxy.scopeNonce }),
   });
@@ -55,7 +57,8 @@ function ensureBanner(root: HTMLElement): HTMLElement {
     el.hidden = true;
     el.textContent = 'Zoeken is tijdelijk niet beschikbaar. Probeer het over enkele minuten opnieuw.';
     const bar = root.querySelector(':scope > .fav-searchbar');
-    if (bar) bar.after(el); else root.prepend(el);
+    if (bar) bar.after(el);
+    else root.prepend(el);
   }
   return el;
 }

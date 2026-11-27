@@ -1,0 +1,5 @@
+# Formatting-only commits, skipped by git blame (GitHub reads this file too;
+# locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+
+# Apply Oxfmt to the TypeScript, CSS, tests and configs
+2d816c2037869dc36483989f02f386e34106f823

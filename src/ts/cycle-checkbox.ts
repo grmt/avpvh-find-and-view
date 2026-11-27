@@ -23,8 +23,10 @@ export function attachCycleCheckbox(
       // can restore it. The native click already toggled `cb` itself, so
       // its pre-click value is the opposite of its current one.
       snapshot = new Map(
-        [...root.querySelectorAll<HTMLInputElement>('input[type=checkbox]')]
-          .map(c => [c, c === cb ? !c.checked : c.checked]),
+        [...root.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].map(c => [
+          c,
+          c === cb ? !c.checked : c.checked,
+        ]),
       );
     }
     phase = (phase + 1) % 4;
@@ -40,7 +42,10 @@ export function attachCycleCheckbox(
       root.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(leaf => updateParents(leaf));
     } else if (phase === 0 && root && snapshot) {
       // Restore: undo the whole cycle.
-      snapshot.forEach((checked, c) => { c.checked = checked; c.indeterminate = false; });
+      snapshot.forEach((checked, c) => {
+        c.checked = checked;
+        c.indeterminate = false;
+      });
       root.querySelectorAll<HTMLElement>('.fav-col-tree-leaf').forEach(leaf => updateParents(leaf));
       snapshot = null;
     } else {

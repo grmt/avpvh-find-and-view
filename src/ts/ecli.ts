@@ -27,7 +27,6 @@ interface EcliConfig extends SearchConfig {
   placeholder: string;
 }
 
-
 declare global {
   interface Window {
     favEcliInstances?: EcliConfig[];
@@ -54,7 +53,10 @@ function renderResults(el: HTMLElement, docs: EcliDoc[]): void {
     el.innerHTML = '<p class="fav-ecli-empty">Geen ECLI\'s gevonden.</p>';
     return;
   }
-  el.innerHTML = DOMPurify.sanitize(docs.map(d => `
+  el.innerHTML = DOMPurify.sanitize(
+    docs
+      .map(
+        d => `
     <div class="fav-ecli-card">
       <div class="fav-ecli-card-header">
         <a class="fav-ecli-id" href="https://uitspraken.rechtspraak.nl/details?id=${encodeURIComponent(d.ecli)}" target="_blank" rel="noopener noreferrer">${escapeHtml(d.ecli)}</a>
@@ -64,7 +66,11 @@ function renderResults(el: HTMLElement, docs: EcliDoc[]): void {
         ${d.references.map(r => `<li><a href="${escapeHtml(refHref(r))}" target="_blank" rel="noopener noreferrer">${escapeHtml(refLabel(r))}</a></li>`).join('')}
       </ul>
     </div>
-  `).join(''), { ADD_ATTR: ['target'] });
+  `,
+      )
+      .join(''),
+    { ADD_ATTR: ['target'] },
+  );
 }
 
 function initInstance(cfg: EcliConfig): void {
@@ -83,13 +89,17 @@ function initInstance(cfg: EcliConfig): void {
 
   const search = (query: string): void => {
     const isFullEcli = fullEcliPattern.test(query);
-    searchIndex<{ hits?: EcliDoc[] }>(cfg, cfg.ecliIndex,
-        isFullEcli
-          ? { q: '', filter: `ecli = "${query.toUpperCase()}"`, limit: 1 }
-          : { q: query, limit: 50, ...(query ? {} : { sort: ['citation_count:desc'] }) },
+    searchIndex<{ hits?: EcliDoc[] }>(
+      cfg,
+      cfg.ecliIndex,
+      isFullEcli
+        ? { q: '', filter: `ecli = "${query.toUpperCase()}"`, limit: 1 }
+        : { q: query, limit: 50, ...(query ? {} : { sort: ['citation_count:desc'] }) },
     )
       .then((data: { hits?: EcliDoc[] }) => renderResults(resultsEl, data.hits ?? []))
-      .catch(() => { resultsEl.innerHTML = '<p class="fav-ecli-empty">Kon niet zoeken.</p>'; });
+      .catch(() => {
+        resultsEl.innerHTML = '<p class="fav-ecli-empty">Kon niet zoeken.</p>';
+      });
     if (hintEl) hintEl.style.display = query ? 'none' : '';
   };
 

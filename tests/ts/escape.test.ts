@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  escapeHtml,
-  highlightHtml,
-  quoteFilter,
-  safeLocalOcrUrl,
-  safeUrl,
-  urlAttribute,
-} from '../../src/ts/escape';
+import { escapeHtml, highlightHtml, quoteFilter, safeLocalOcrUrl, safeUrl, urlAttribute } from '../../src/ts/escape';
 
 describe('escapeHtml', () => {
   it('escapes the five HTML-special characters', () => {
@@ -43,12 +36,9 @@ describe('safeUrl', () => {
     expect(safeUrl('/wp-content/x.pdf')).toBe(`${window.location.origin}/wp-content/x.pdf`);
   });
 
-  it.each(['javascript:alert(1)', ' JaVaScRiPt:alert(1)', 'data:text/html,x', 'vbscript:x'])(
-    'rejects %s',
-    (url) => {
-      expect(safeUrl(url)).toBe('');
-    },
-  );
+  it.each(['javascript:alert(1)', ' JaVaScRiPt:alert(1)', 'data:text/html,x', 'vbscript:x'])('rejects %s', url => {
+    expect(safeUrl(url)).toBe('');
+  });
 
   it('rejects non-strings and blanks', () => {
     expect(safeUrl(undefined)).toBe('');
@@ -63,9 +53,7 @@ describe('safeUrl', () => {
 
 describe('urlAttribute', () => {
   it('escapes a safe URL for an attribute', () => {
-    expect(urlAttribute('https://example.org/?a=1&b="2"')).toBe(
-      'https://example.org/?a=1&amp;b=%222%22',
-    );
+    expect(urlAttribute('https://example.org/?a=1&b="2"')).toBe('https://example.org/?a=1&amp;b=%222%22');
   });
 
   it('returns an empty string for an unsafe URL', () => {
@@ -80,22 +68,16 @@ describe('quoteFilter', () => {
 });
 
 describe('safeLocalOcrUrl', () => {
-  it.each(['http://localhost:8080/ocr', 'https://127.0.0.1/ocr', 'http://[::1]:5000/'])(
-    'accepts loopback %s',
-    (url) => {
-      expect(safeLocalOcrUrl(` ${url} `)).toBe(new URL(url).href);
+  it.each(['http://localhost:8080/ocr', 'https://127.0.0.1/ocr', 'http://[::1]:5000/'])('accepts loopback %s', url => {
+    expect(safeLocalOcrUrl(` ${url} `)).toBe(new URL(url).href);
+  });
+
+  it.each(['http://example.org/ocr', 'http://user:pw@localhost/ocr', 'ftp://localhost/ocr', 'not a url', ''])(
+    'rejects %s',
+    url => {
+      expect(safeLocalOcrUrl(url)).toBe('');
     },
   );
-
-  it.each([
-    'http://example.org/ocr',
-    'http://user:pw@localhost/ocr',
-    'ftp://localhost/ocr',
-    'not a url',
-    '',
-  ])('rejects %s', (url) => {
-    expect(safeLocalOcrUrl(url)).toBe('');
-  });
 
   it('rejects non-strings', () => {
     expect(safeLocalOcrUrl(null)).toBe('');
