@@ -27,7 +27,6 @@ interface EcliConfig extends SearchConfig {
   placeholder: string;
 }
 
-export {};
 
 declare global {
   interface Window {

@@ -123,6 +123,10 @@ jobs:
         run: |
           npm run lint:ts:typecheck
 
+      - name: "Oxlint"
+        run: |
+          npm run lint:ts:oxlint
+
   tests:
     name: "Tests"
     runs-on: ubuntu-latest

@@ -1,5 +1,7 @@
 /** Escape text for both HTML text and quoted attributes. */
 export function escapeHtml(value: unknown): string {
+  // Takes any field of a search hit; an object turning into "[object Object]" is harmless here.
+  // oxlint-disable-next-line typescript/no-base-to-string
   return String(value ?? '').replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[c]!);

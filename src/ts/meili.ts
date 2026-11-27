@@ -31,7 +31,9 @@ export function proxyHttpClient(cfg: SearchConfig): (...args: Parameters<typeof 
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.pathname !== '/multi-search') throw new Error('Unsupported search operation');
-    const body = JSON.parse(String(init?.body ?? '{}')) as { queries: object[] };
+    const raw = init?.body ?? '{}';
+    if (typeof raw !== 'string') throw new Error('Unsupported search request body');
+    const body = JSON.parse(raw) as { queries: object[] };
     return proxySearch(cfg, body.queries);
   };
 }

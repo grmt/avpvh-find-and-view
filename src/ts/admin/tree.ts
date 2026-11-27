@@ -11,10 +11,10 @@ interface TreeNode {
 const api = (window as any).favTree as { root: string; nonce: string };
 
 async function apiFetch(endpoint: string, opts: RequestInit = {}) {
-	const res = await fetch(api.root + endpoint, {
-		...opts,
-		headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': api.nonce, ...(opts.headers ?? {}) },
-	});
+	// The caller's headers win; Headers also takes a Headers object or an array.
+	const headers = new Headers({ 'Content-Type': 'application/json', 'X-WP-Nonce': api.nonce });
+	new Headers(opts.headers).forEach((value, name) => headers.set(name, value));
+	const res = await fetch(api.root + endpoint, { ...opts, headers });
 	if (!res.ok) throw new Error(await res.text());
 	return res.json();
 }
@@ -89,9 +89,9 @@ function renderNode(node: TreeNode, ul: HTMLElement) {
 		li.addEventListener('dragstart', (e) => {
 			// If this item isn't selected, drag only this item
 			if (!selected.has(node.path)) {
-				selected.forEach((p) => {
+				if (selected.size > 0) {
 					document.querySelectorAll<HTMLElement>('.fav-selected').forEach(el => el.classList.remove('fav-selected'));
-				});
+				}
 				selected.clear();
 			}
 			dragSrc = node.path;
@@ -182,7 +182,7 @@ function startRename(labelEl: HTMLSpanElement, node: TreeNode) {
 	};
 
 	input.addEventListener('blur', commit);
-	input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') input.replaceWith(labelEl); });
+	input.addEventListener('keydown', (e) => { if (e.key === 'Enter') void commit(); if (e.key === 'Escape') input.replaceWith(labelEl); });
 }
 
 async function refresh() {
@@ -443,18 +443,18 @@ async function docSave() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-	refresh();
+	void refresh();
 	document.getElementById('fav-tree-normalize')?.addEventListener('click', () => normalize(true));
 	document.getElementById('fav-normalize-apply')?.addEventListener('click', () => normalize(false));
 	document.getElementById('fav-tree-remap')?.addEventListener('click', () => remap(true));
 	document.getElementById('fav-remap-apply')?.addEventListener('click', () => remap(false));
 	document.getElementById('fav-tree-reindex')?.addEventListener('click', reindex);
 	document.getElementById('fav-tree-reindex-content')?.addEventListener('click', reindexContent);
-	loadIndexStats();
+	void loadIndexStats();
 	document.getElementById('fav-stats-refresh')?.addEventListener('click', loadIndexStats);
 	document.getElementById('fav-idx-apply')?.addEventListener('click', applyIndexSettings);
 	document.getElementById('fav-doc-search')?.addEventListener('click', docSearch);
-	document.getElementById('fav-doc-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') docSearch(); });
+	document.getElementById('fav-doc-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') void docSearch(); });
 	document.getElementById('fav-doc-save')?.addEventListener('click', docSave);
 	document.getElementById('fav-sel-move')?.addEventListener('click', moveSelected);
 	document.getElementById('fav-sel-clear')?.addEventListener('click', () => {
