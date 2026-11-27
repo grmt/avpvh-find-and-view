@@ -232,7 +232,7 @@ function initInstance(cfg: FavConfig): void {
 
       if (phase === 3 && root) {
         // Solo: this branch checked, everything else in the tree unchecked.
-        const mine = new Set<HTMLInputElement>([...li.querySelectorAll<HTMLInputElement>('input[type=checkbox]')]);
+        const mine = new Set(li.querySelectorAll<HTMLInputElement>('input[type=checkbox]'));
         mine.add(cb);
         root.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(c => {
           c.checked = mine.has(c);

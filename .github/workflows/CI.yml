@@ -123,6 +123,10 @@ jobs:
         run: |
           npm run lint:ts:typecheck
 
+      - name: "Oxlint"
+        run: |
+          npm run lint:ts:oxlint
+
   tests:
     name: "Tests"
     runs-on: ubuntu-latest
@@ -174,6 +178,8 @@ jobs:
     secrets: inherit
     with:
       sonar-exclusions: "languages/**,local-ocr/**"
+      # Vitest for src/ts, with coverage for Codecov and SonarQube Cloud.
+      vitest: true
 
   # Shared with the other own plugins: dependencies on the PHP floor, syntax on
   # 8.4 and 8.5, PHPCompatibility and the WordPress.org Plugin Check.
